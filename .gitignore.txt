@@ -1,0 +1,25 @@
+# Visual Studio specific
+.vs/
+*.user
+*.suo
+*.db
+*.opendb
+*.vc.db
+
+# Build and compilation outputs
+Debug/
+Release/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.lib
+*.dll
+*.exp
+
+# Compiled Shader Objects (DirectX)
+*.cso
