@@ -2,6 +2,11 @@ Texture2D colorMap : register(t0);
 Texture2D normalMap : register(t1);
 SamplerState colorSampler : register(s0);
 
+Texture2D colorMap  : register(t0);
+Texture2D colorMap2 : register(t1);
+Texture2D colorMap3 : register(t2);
+Texture2D blendMap  : register(t3);
+
 cbuffer cbChangerEveryFrame : register(b0)
 {
 	matrix worldMatrix;

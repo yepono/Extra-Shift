@@ -35,6 +35,7 @@ private:
 
 	ID3D11ShaderResourceView* colorMap;
 	ID3D11ShaderResourceView* colorMap2;
+	ID3D11ShaderResourceView* colorMap3;
 	ID3D11ShaderResourceView* blendMap;
 	ID3D11SamplerState* colorMapSampler;
 
@@ -58,22 +59,52 @@ private:
 	ID3D11DeviceContext* d3dContext;
 
 public:
-	TerrenoRR(int ancho, int alto, ID3D11Device* D3DDevice, ID3D11DeviceContext* D3DContext)
+	TerrenoRR(
+		int ancho,
+		int alto,
+		ID3D11Device* D3DDevice,
+		ID3D11DeviceContext* D3DContext)
 	{
-		//copiamos el device y el device context a la clase terreno
+		// se inicializan parametro mas que nada por buena practica antes de llamar a Cargar parametros
+		VertexShaderVS = nullptr;
+		solidColorPS = nullptr;
+		inputLayout = nullptr;
+		vertexBuffer = nullptr;
+		indexBuffer = nullptr;
+
+		colorMap = nullptr;
+		colorMap2 = nullptr;
+		colorMap3 = nullptr;
+		blendMap = nullptr;
+		colorMapSampler = nullptr;
+
+		viewCB = nullptr;
+		projCB = nullptr;
+		worldCB = nullptr;
+
+		heightMap = nullptr;
+		alturaData = nullptr;
+		vertices = nullptr;
+		vertcol = nullptr;
+		indices = nullptr;
+
 		d3dContext = D3DContext;
 		d3dDevice = D3DDevice;
-		//este es el ancho y el alto del terreno en su escala
+
 		this->ancho = ancho;
 		this->alto = alto;
-		//aqui cargamos las texturas de alturas y el cesped
-		CargaParametros(L"vckmabus_2K_Albedo.jpg", L"hm_desierto.png", 100.0f);
+
+		CargaParametros(
+			L"vckmabus_2K_Albedo.jpg",
+			L"alturas.jpg",
+			100.0f);
 	}
 
 	~TerrenoRR()
 	{
 		//libera recursos
-		delete vertcol;
+		delete[] vertcol;
+		vertcol = nullptr;
 		UnloadContent();
 	}
 
@@ -185,8 +216,8 @@ public:
 		float du = tile / (float)(anchoTexTerr);
 		float dv = tile / (float)(altoTexTerr);
 		//el tile del blend de las texturas
-		float blend_du = 1 / (float)(anchoTexTerr);
-		float blend_dv = 1 / (float)(altoTexTerr);
+		float blend_du = 1.0f / (float)(anchoTexTerr - 1);
+		float blend_dv = 1.0f / (float)(altoTexTerr - 1);
 		//cantidad de vertices
 		int cuenta = anchoTexTerr * altoTexTerr;
 
@@ -240,19 +271,60 @@ public:
 			return false;
 		}
 		//ya una vez pasados los vertices al buffer borramos el arreglo donde los habiamos creado inicialmente
-		delete vertices;
+		delete[] vertices;
+		vertices = nullptr;
 
 		//creamos los indices para hacer el terreno
 		estableceIndices();
 		//crea los accesos de las texturas para los shaders 
+		/*
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(d3dDevice, diffuseTex, 0, 0, &colorMap, 0);
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(d3dDevice, L"ugsnfawlw_2K_Albedo.jpg", 0, 0, &colorMap2, 0);
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(d3dDevice, L"hm_desierto.png", 0, 0, &blendMap, 0);
+		*/
+
+		// nueva implementacion
+		d3dResult = D3DX11CreateShaderResourceViewFromFile(
+			d3dDevice,
+			diffuseTex,
+			nullptr,
+			nullptr,
+			&colorMap,
+			nullptr
+		);
+
+		if (FAILED(d3dResult))
+			return false;
+
+		d3dResult = D3DX11CreateShaderResourceViewFromFile(
+			d3dDevice,
+			L"ugsnfawlw_2K_Albedo.jpg",
+			nullptr,
+			nullptr,
+			&colorMap2,
+			nullptr
+		);
+
+		if (FAILED(d3dResult))
+			return false;
+
+		d3dResult = D3DX11CreateShaderResourceViewFromFile(
+			d3dDevice,
+			L"umilae2n_2K_Albedo.jpg",
+			nullptr,
+			nullptr,
+			&colorMap3,
+			nullptr
+		);
+
+		if (FAILED(d3dResult))
+			return false;
 
 		if (FAILED(d3dResult))
 		{
 			return false;
 		}
+
 		//aqui creamos el sampler
 		D3D11_SAMPLER_DESC colorMapDesc;
 		ZeroMemory(&colorMapDesc, sizeof(colorMapDesc));
@@ -307,7 +379,7 @@ public:
 		//crea la matriz de vista
 		D3DXMatrixLookAtLH(&viewMatrix, &eye, &target, &up);
 		//la de proyeccion
-		D3DXMatrixPerspectiveFovLH(&projMatrix, D3DX_PI / 0.2, ancho / alto, 0.01f, 1000.0f);
+		D3DXMatrixPerspectiveFovLH(&projMatrix, D3DX_PI / 4.0, (float)ancho / (float)alto, 0.01f, 1000.0f);
 		//las transpone para acelerar la multiplicacion
 		D3DXMatrixTranspose(&viewMatrix, &viewMatrix);
 		D3DXMatrixTranspose(&projMatrix, &projMatrix);
@@ -317,6 +389,14 @@ public:
 
 	bool UnloadContent()
 	{
+		if (colorMap2)
+			colorMap2->Release();
+
+		if (colorMap3)
+			colorMap3->Release();
+
+		if (blendMap)
+			blendMap->Release();
 		if (colorMapSampler)
 			colorMapSampler->Release();
 		if (colorMap)
@@ -347,6 +427,11 @@ public:
 		}
 		alturaData = 0;
 
+
+		colorMap = nullptr;
+		colorMap2 = nullptr;
+		colorMap3 = nullptr;
+		blendMap = nullptr;
 		colorMapSampler = 0;
 		colorMap = 0;
 		VertexShaderVS = 0;
@@ -386,9 +471,14 @@ public:
 		d3dContext->VSSetShader(VertexShaderVS, 0, 0);
 		d3dContext->PSSetShader(solidColorPS, 0, 0);
 		//pasa lo sbuffers al shader
-		d3dContext->PSSetShaderResources(0, 1, &colorMap);
-		d3dContext->PSSetShaderResources(1, 1, &colorMap2);
-		d3dContext->PSSetShaderResources(2, 1, &blendMap);
+	//	d3dContext->PSSetShaderResources(0, 1, &colorMap);
+	//	d3dContext->PSSetShaderResources(1, 1, &colorMap2);
+	//	d3dContext->PSSetShaderResources(2, 1, &blendMap);
+
+		d3dContext->PSSetShaderResources(0,1,&colorMap);
+		d3dContext->PSSetShaderResources(1,1,&colorMap2);
+		d3dContext->PSSetShaderResources(2,1,&colorMap3);
+
 		d3dContext->PSSetSamplers(0, 1, &colorMapSampler);
 
 		//mueve la camara
@@ -401,6 +491,7 @@ public:
 		viewMatrix *= ry;
 
 		D3DXMATRIX worldMat = rotationMat;//= rotationMat * translationMat;
+		D3DXMatrixIdentity(&worldMat);
 		D3DXMatrixTranspose(&worldMat, &worldMat);
 		//actualiza los buffers del shader
 		d3dContext->UpdateSubresource(worldCB, 0, 0, &worldMat, 0, 0);
@@ -411,9 +502,16 @@ public:
 		d3dContext->VSSetConstantBuffers(1, 1, &viewCB);
 		d3dContext->VSSetConstantBuffers(2, 1, &projCB);
 		//cantidad de trabajos
-		int cuenta = (anchoTexTerr - 1) * (altoTexTerr - 1) * 6;
-		d3dContext->DrawIndexed(cuenta, 0, 0);
+		int indexCount =
+			(anchoTexTerr - 1) *
+			(altoTexTerr - 1) *
+			6;
 
+		d3dContext->DrawIndexed(
+			indexCount,
+			0,
+			0
+		);
 
 	}
 
@@ -450,8 +548,11 @@ private:
 		alturaData = new BYTE * [altoTexTerr];
 
 		//generamos el espacio en cada puntero de cada fila de bytes
-		for (int i = 0; i < anchoTexTerr; i++)
+		for (int i = 0; i < altoTexTerr; i++)
+		{
 			alturaData[i] = new BYTE[anchoTexTerr];
+		}
+
 		//del archivo de la textura genera el banco de acceso a los datos del  pixel
 		resultado = D3DX11CreateTextureFromFile(d3dDevice, heightTex, &texDesc, NULL, &heightMap, NULL);
 
@@ -516,7 +617,8 @@ private:
 		{
 			return;
 		}
-		delete indices;
+		delete[] indices;
+		indices = nullptr;
 	}
 
 	void generaNormales(VertexComponent* vertices)
