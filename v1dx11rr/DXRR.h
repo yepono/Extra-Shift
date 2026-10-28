@@ -42,7 +42,26 @@ public:
 	SkyDome *skydome;
 	BillboardRR *billboard;
 	Camara *camara;
-	ModeloRR* model;
+	ModeloRR* chavo3;
+	ModeloRR* alien;
+	ModeloRR* chava1;
+	ModeloRR* chava2;
+	ModeloRR* humano;
+
+
+
+	ModeloRR* carrito;
+	ModeloRR* banio;
+	ModeloRR* cartel;
+	ModeloRR* canasta;
+	ModeloRR* mostrador;
+	ModeloRR* refri_1;
+	ModeloRR* refri_2;
+	ModeloRR* repisa_1;
+	ModeloRR* repisa_2;
+	ModeloRR* bar;
+	ModeloRR* hotel;
+	ModeloRR* oxxo;
 	
 	float izqder;
 	float arriaba;
@@ -72,15 +91,34 @@ public:
 		izqder = 0;
 		arriaba = 0;
 		billCargaFuego();
-		camara = new Camara(D3DXVECTOR3(0,80,6), D3DXVECTOR3(0,80,0), D3DXVECTOR3(0,1,0), Ancho, Alto);
-		terreno = new TerrenoRR(300, 300, d3dDevice, d3dContext);
-		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"SkyDome.png");
-		billboard = new BillboardRR(L"Assets/Billboards/fuego-anim.png",L"Assets/Billboards/fuego-anim-normal.png", d3dDevice, d3dContext, 5);
-		model = new ModeloRR(d3dDevice, d3dContext, "Assets/Cofre/Cofre.obj", L"Assets/Cofre/Cofre-color.png", L"Assets/Cofre/Cofre-spec.png", 0, 0);
+		camara = new Camara(D3DXVECTOR3(0, 80, 6), D3DXVECTOR3(0, 80, 0), D3DXVECTOR3(0, 1, 0), Ancho, Alto);
+		terreno = new TerrenoRR(500, 500, d3dDevice, d3dContext);
+		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"Skydome.png");
+		billboard = new BillboardRR(L"Assets/Billboards/fuego-anim.png", L"Assets/Billboards/fuego-anim-normal.png", d3dDevice, d3dContext, 5);
+		//model = new ModeloRR(d3dDevice, d3dContext, "Assets/Cofre/Cofre.obj", L"Assets/Cofre/Cofre-color.png", L"Assets/Cofre/Cofre-spec.png", 0, 0);
+	
+		// Personajes del escenario
+		chavo3 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chavo3.obj", L"Assets/Modelos/Persona/chavo3.jpeg", L"Assets/Modelos/Persona/chavo3_specular_map.png", -90, 30);
+		alien = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/alien.obj", L"Assets/Modelos/Persona/alien.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -58, 30);
+		chava1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chava1.obj", L"Assets/Modelos/Persona/chava1.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -15, 15);
+		chava2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chava2.obj", L"Assets/Modelos/Persona/chava2.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -40, 50);
+	//	humano = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/humano.obj", L"Assets/Modelos/Persona/persona.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", 36, 36);
 
-		
 
-		
+		// objetos del escenario
+		carrito = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/carrito/carrito.obj", L"Assets/Modelos/objetos/carrito/carrito2.png", L"Assets/Modelos/objetos/carrito/carrito1.png", 5, 5);
+		cartel = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/cartel/cartel.obj", L"Assets/Modelos/objetos/cartel/Material_45_baseColor.png", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 7, 7);
+		canasta = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/canasta.obj", L"Assets/Modelos/objetos/canasta.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 9, 9);
+		refri_1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-1.obj", L"Assets/Modelos/objetos/cartel/Material_45_baseColor.png", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 11, 11);
+		refri_2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-2.obj", L"Assets/Modelos/objetos/cartel/Material_45_baseColor.png", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 13, 13);
+		repisa_1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 15, 15);
+		repisa_2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-2.obj", L"Assets/Modelos/objetos/repisa-2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 17, 17);
+		mostrador = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/mostrador.obj", L"Assets/Modelos/objetos/mostrador.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -70, 35);
+		banio = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/banio/banio.obj", L"Assets/Modelos/objetos/banio/banio1.png", L"Assets/Modelos/objetos/banio/banio2.png", 22, 22);
+		bar = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/bar.obj", L"Assets/Modelos/objetos/bar.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -170, 50);
+		hotel = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/hotel.obj", L"Assets/Modelos/objetos/hotel.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -310, -125);
+		oxxo = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/oxxo.obj", L"Assets/Modelos/objetos/oxxo.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -310, 110);
+
 	}
 
 	~DXRR()
@@ -274,7 +312,25 @@ public:
 			-11, -78, 4, 5, uv1, uv2, uv3, uv4, frameBillboard);
 
 		//TurnOffAlphaBlending();
-		model->Draw(camara->vista, camara->proyeccion, terreno->Superficie(100, 20), camara->posCam, 10.0f, 0, 'A', 1);
+		chavo3->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-90, 30), camara->posCam, 10.0f, 0, 'A', 0.5);
+		alien->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-58, 30), camara->posCam, 10.0f, 0, 'A', 0.5);
+		chava1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-15, 15), camara->posCam, 10.0f, 0, 'A', 0.5);
+		chava2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-40, 50), camara->posCam, 180.0f, 0, 'X', 0.5);
+	//	humano->Draw(camara->vista, camara->proyeccion, terreno->Superficie(36, 36), camara->posCam, 10.0f, 0, 'A', 0.5);
+
+
+		carrito->Draw(camara->vista, camara->proyeccion, terreno->Superficie(5, 5), camara->posCam, 10.0f, 0, 'A', 1);
+		cartel->Draw(camara->vista, camara->proyeccion, terreno->Superficie(7, 7), camara->posCam, 10.0f, 0, 'A', 0.5);
+		canasta->Draw(camara->vista, camara->proyeccion, terreno->Superficie(9, 9), camara->posCam, 10.0f, 0, 'A', 0.5);
+		refri_1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(13, 13), camara->posCam, 10.0f, 0, 'A', 1);
+		refri_2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(15, 15), camara->posCam, 10.0f, 0, 'A', 1);
+		repisa_1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(17, 17), camara->posCam, 10.0f, 0, 'A', 1);
+		repisa_2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(19, 19), camara->posCam, 10.0f, 0, 'A', 1);
+		mostrador->Draw(camara->vista, camara->proyeccion, terreno->Superficie(3, 0), camara->posCam, 10.0f, 0, 'A', 1.3);
+		banio->Draw(camara->vista, camara->proyeccion, terreno->Superficie(22, 22), camara->posCam, 10.0f, 0, 'A', 2);
+		bar->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-170, -100), camara->posCam, 10.0f, 0, 'A', 3.5);
+		hotel->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-195, -50), camara->posCam, 10.0f, 0, 'A', 2.5);
+		oxxo->Draw(camara->vista, camara->proyeccion, terreno->Superficie(0, 0), camara->posCam, 10.0f, 0, 'A', 2.3);
 
 		swapChain->Present( 1, 0 );
 	}
