@@ -94,10 +94,22 @@ public:
 		this->ancho = ancho;
 		this->alto = alto;
 
-		CargaParametros(
-			L"vckmabus_2K_Albedo.jpg",
-			L"alturas.jpg",
-			100.0f);
+
+		bool loaded = CargaParametros(
+			L"coast_sand_02_diff_2k.jpg",
+			L"desierto.jpg",
+			100.0f
+		);
+
+		if (!loaded)
+		{
+			MessageBox(
+				nullptr,
+				L"Terrain initialization failed. Check Shader.fx and terrain texture paths.",
+				L"Terrain Error",
+				MB_OK | MB_ICONERROR
+			);
+		}
 	}
 
 	~TerrenoRR()
@@ -286,7 +298,7 @@ public:
 		// nueva implementacion
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(
 			d3dDevice,
-			diffuseTex,
+			L"coast_sand_02_diff_2k.jpg",
 			nullptr,
 			nullptr,
 			&colorMap,
@@ -294,11 +306,16 @@ public:
 		);
 
 		if (FAILED(d3dResult))
+		{
+			OutputDebugStringW(
+				L"Could not load coast_sand_02_diff_2k.jpg\n"
+			);
 			return false;
+		}
 
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(
 			d3dDevice,
-			L"ugsnfawlw_2K_Albedo.jpg",
+			L"mud_cracked_dry_03_diff_2k.jpg",
 			nullptr,
 			nullptr,
 			&colorMap2,
@@ -306,11 +323,16 @@ public:
 		);
 
 		if (FAILED(d3dResult))
+		{
+			OutputDebugStringW(
+				L"Could not load mud_cracked_dry_03_diff_2k.jpg\n"
+			);
 			return false;
+		}
 
 		d3dResult = D3DX11CreateShaderResourceViewFromFile(
 			d3dDevice,
-			L"umilae2n_2K_Albedo.jpg",
+			L"baseball_playground_diff_2k.jpg",
 			nullptr,
 			nullptr,
 			&colorMap3,
@@ -318,13 +340,12 @@ public:
 		);
 
 		if (FAILED(d3dResult))
-			return false;
-
-		if (FAILED(d3dResult))
 		{
+			OutputDebugStringW(
+				L"Could not load baseball_playground_diff_2k.jpg\n"
+			);
 			return false;
 		}
-
 		//aqui creamos el sampler
 		D3D11_SAMPLER_DESC colorMapDesc;
 		ZeroMemory(&colorMapDesc, sizeof(colorMapDesc));
@@ -423,9 +444,9 @@ public:
 			{
 				delete alturaData[i];
 			}
-			delete alturaData;
+			delete[] alturaData;
 		}
-		alturaData = 0;
+		alturaData = nullptr;
 
 
 		colorMap = nullptr;
@@ -486,9 +507,9 @@ public:
 		D3DXMatrixRotationYawPitchRoll(&rotationMat, 0.0f, 0.0f, 0.0f);
 		D3DXMATRIX translationMat;
 		D3DXMatrixTranslation(&translationMat, 0.0f, 0.0f, 6.0f);
-		D3DXMATRIX ry;
-		D3DXMatrixRotationY(&ry, 0.01);
-		viewMatrix *= ry;
+	//	D3DXMATRIX ry;
+	//	D3DXMatrixRotationY(&ry, 0.01);
+	//	viewMatrix *= ry;
 
 		D3DXMATRIX worldMat = rotationMat;//= rotationMat * translationMat;
 		D3DXMatrixIdentity(&worldMat);
