@@ -1,96 +1,235 @@
 #ifndef _camara
 #define _camara
 
-//Clase camara hecha por Rafael Rosas para los UltraLMADs
-//Videojuegos
-
 #include <d3d11.h>
 #include <D3DX11.h>
 #include <D3DX10math.h>
 
 class Camara{
 public:
-	D3DXVECTOR3 posCam;
-	D3DXVECTOR3 hdveo;
-	D3DXVECTOR3 hdvoy;
-	D3DXVECTOR3 refUp;
-	D3DXVECTOR3 refRight;
-	D3DXVECTOR3 refFront;
-	D3DXMATRIX vista;
-	D3DXMATRIX proyeccion;
-	int ancho;
-	int alto;
+	D3DXVECTOR3 Position;
+	D3DXVECTOR3 Target;
+	D3DXVECTOR3 Up;
 
-	Camara(D3DXVECTOR3 eye, D3DXVECTOR3 target, D3DXVECTOR3 up, int Ancho, int Alto)
+	D3DXVECTOR3 DefaultForward;
+	D3DXVECTOR3 DefaultRight;
+	D3DXVECTOR3 Forward;
+	D3DXVECTOR3 Right;
+
+	D3DXMATRIX View;
+	D3DXMATRIX Projection;
+	D3DXMATRIX RotationMatrix;
+
+	// yaw: rotacion horizontal; pitch: rotacion vertical
+	float Yaw;
+	float Pitch;
+
+	Camara(
+		D3DXVECTOR3 position,
+		D3DXVECTOR3 target,
+		D3DXVECTOR3 up,
+		int width,
+		int height)
 	{
-		//posicion de la camara
-		posCam = eye;
-		//a donde ve
-		hdveo = target;
-		refUp = up;
-		ancho = Ancho;
-		alto = Alto;
+		Position = position;
+		Target = target;
+		Up = up;
 
-		//crea la matriz de vista
-		D3DXMatrixLookAtLH(&vista, &posCam, &hdveo, &refUp);
-		//la de proyeccion
-		D3DXMatrixPerspectiveFovLH( &proyeccion, D3DX_PI/4.0, ancho / alto, 0.01f, 1000.0f );
-		//las transpone para acelerar la multiplicacion
-		D3DXMatrixTranspose( &vista, &vista );
-		D3DXMatrixTranspose( &proyeccion, &proyeccion );
+		D3DXMatrixLookAtLH(
+			&View,
+			&Position,
+			&Target,
+			&Up
+		);
 
-		D3DXVec3Normalize(&refUp, &refUp);
+		D3DXMatrixPerspectiveFovLH(
+			&Projection,
+			D3DXToRadian(45.0f),
+			static_cast<float>(width) / static_cast<float>(height),
+			0.01f,
+			1000.0f
+		);
 
-		refFront = D3DXVECTOR3(target.x - eye.x, target.y - eye.y, target.z - eye.z);
-		D3DXVec3Normalize(&refFront, &refFront);
+		DefaultForward = D3DXVECTOR3(0.0f, 0.0f, 1.0f);
+		DefaultRight = D3DXVECTOR3(1.0f, 0.0f, 0.0f);
 
-		D3DXVec3Cross(&refRight, &refFront, &refUp);
-		D3DXVec3Normalize(&refRight, &refRight);
+		Forward = DefaultForward;
+		Right = DefaultRight;
+
+		Yaw = 0.0f;
+		Pitch = 0.0f;
+	}
+
+	void UpdateCamera(
+		float moveBackForward,
+		float moveLeftRight,
+		float yaw,
+		float pitch)
+
+	{
+		Yaw += yaw;
+		Pitch += pitch;
+
+		// para que la camara no de vueltas infinitas veticalmente
+		const float maxPitch = D3DXToRadian(89.0f);
+
+		if (Pitch > maxPitch)
+			Pitch = maxPitch;
+
+		if (Pitch < -maxPitch)
+			Pitch = -maxPitch;
+
+		// Ahora si, la rotacion competa de la camara
+		D3DXMatrixRotationYawPitchRoll(
+			&RotationMatrix,
+			Yaw,
+			Pitch,
+			0.0f
+		);
+
+		// calcular la direccion hacia la que mira la cam
+		D3DXVec3TransformCoord(
+			&Target,
+			&DefaultForward,
+			&RotationMatrix
+		);
+
+		D3DXVec3Normalize(&Target, &Target);
 		
+		// calcular los vectores del movimiento usando la rotacion horizontal (yaw)
+		D3DXMATRIX yawMatrix;
+		D3DXMatrixRotationY(&yawMatrix, Yaw);
+
+		D3DXVec3TransformCoord(
+			&Forward,
+			&DefaultForward,
+			&yawMatrix
+		);
+
+		D3DXVec3TransformCoord(
+			&Right,
+			&DefaultRight,
+			&yawMatrix
+		);
+
+		D3DXVec3Normalize(&Forward, &Forward);
+		D3DXVec3Normalize(&Right, &Right);
+
+		// Aplicar el movimeinto
+		Position += Forward * moveBackForward;
+		Position += Right * moveLeftRight;
+
+		// el target es una direccion relativa a la camara
+		D3DXVECTOR3 lookAt = Position + Target;
+
+		D3DXMatrixLookAtLH(
+			&View,
+			&Position,
+			&lookAt,
+			&Up
+		);
+
 	}
 
-	D3DXMATRIX UpdateCam(float vel, float arriaba, float izqder)
+// c es para togglear la primera persona y la tercera
+	void UpdateThirdPerson(
+		D3DXVECTOR3& playerPosition,
+		float moveBackForward,
+		float moveLeftRight,
+		float yaw,
+		float pitch,
+		float distance,
+		float height)
 	{
-		D3DXVECTOR4 tempo;
-		D3DXQUATERNION quatern; //quaternion temporal para la camara
-		D3DXMATRIX giraUp, giraRight; //matrices temporales para los giros
+		Yaw += yaw;
+		Pitch += pitch;
 
-		//creamos al quaternion segun el vector up
-		D3DXQuaternionRotationAxis(&quatern, &refUp, izqder); 
-		//lo normalizamos para que no acumule error
-		D3DXQuaternionNormalize(&quatern, &quatern);
-		//creamos la matriz de rotacion basados en el quaternion
-		D3DXMatrixRotationQuaternion(&giraUp, &quatern);
+		const float maxPitch = D3DXToRadian(75.0f);
+		const float minPitch = D3DXToRadian(-30.0f);
 
-		//transformamos a los vectores ded la camara
-		D3DXVec3Transform(&tempo, &refFront, &giraUp);
-		//como el resultado de la operacion anterior es Vec4 lo casteamos para hacerlo vec3
-		refFront = (D3DXVECTOR3)tempo;
-		//normalizamos para no acumular error
-		D3DXVec3Normalize(&refFront, &refFront);
-		//Con el vector de referencia y el nuevo front calculamos right de nuevo
-		D3DXVec3Cross(&refRight, &refFront, &refUp);
+		if (Pitch > maxPitch)
+			Pitch = maxPitch;
 
-		//una vez calculado right a partir de front y up ahora rotamos sobre right
-		//repetimos el procedimiento anterior
-		D3DXQuaternionRotationAxis(&quatern, &refRight, arriaba);
-		D3DXQuaternionNormalize(&quatern, &quatern);
-		D3DXMatrixRotationQuaternion(&giraRight, &quatern);
+		if (Pitch < minPitch)
+			Pitch = minPitch;
 
-		D3DXVec3Transform(&tempo, &refFront, &giraRight);
-		refFront = (D3DXVECTOR3)tempo;
-		D3DXVec3Normalize(&refFront, &refFront);
-		
+		// Calcular la direccion en la que mira la camara
+		D3DXMatrixRotationYawPitchRoll(
+			&RotationMatrix,
+			Yaw,
+			Pitch,
+			0.0f
+		);
 
-		//ajustamos la matriz de vista con lo obtenido
-		posCam += refFront * vel/10.0;
-		hdveo = posCam + refFront;
-		D3DXMatrixLookAtLH(&vista, &posCam, &hdveo, &refUp);
-		D3DXMatrixTranspose( &vista, &vista );
-		return vista;
+		D3DXVECTOR3 lookDirection;
+
+		D3DXVec3TransformCoord(
+			&lookDirection,
+			&DefaultForward,
+			&RotationMatrix
+		);
+
+		D3DXVec3Normalize(
+			&lookDirection,
+			&lookDirection
+		);
+
+		// Calculate movement vectors using yaw only.
+		D3DXMATRIX yawMatrix;
+
+		D3DXMatrixRotationY(
+			&yawMatrix,
+			Yaw
+		);
+
+		D3DXVec3TransformCoord(
+			&Forward,
+			&DefaultForward,
+			&yawMatrix
+		);
+
+		D3DXVec3TransformCoord(
+			&Right,
+			&DefaultRight,
+			&yawMatrix
+		);
+
+		D3DXVec3Normalize(
+			&Forward,
+			&Forward
+		);
+
+		D3DXVec3Normalize(
+			&Right,
+			&Right
+		);
+
+		// Move the player.
+		playerPosition += Forward * moveBackForward;
+		playerPosition += Right * moveLeftRight;
+
+		// The point that the camera follows.
+		D3DXVECTOR3 focusPoint = playerPosition;
+		focusPoint.y += height;
+
+		// La canara va detras del jugador
+		Position = focusPoint - lookDirection * distance;
+
+		// La camara enfoca al jugador.
+		Target = focusPoint;
+
+		D3DXMatrixLookAtLH(
+			&View,
+			&Position,
+			&Target,
+			&Up
+		);
 	}
-	~Camara()
+
+	D3DXVECTOR2 GetXZ() const
 	{
+		return D3DXVECTOR2(Position.x, Position.z);
 	}
+
 };
 #endif

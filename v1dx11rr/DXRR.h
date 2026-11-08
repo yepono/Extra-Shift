@@ -41,7 +41,6 @@ public:
 	TerrenoRR *terreno;
 	SkyDome *skydome;
 	BillboardRR *billboard;
-	Camara *camara;
 	ModeloRR* chavo3;
 	ModeloRR* alien;
 	ModeloRR* chava1;
@@ -62,10 +61,20 @@ public:
 	ModeloRR* bar;
 	ModeloRR* hotel;
 	ModeloRR* oxxo;
-	
-	float izqder;
-	float arriaba;
-	float vel;
+
+
+	// Relacionado a la camara
+	float moveBackForward;
+	float moveLeftRight;
+	float camYaw;
+	float camPitch;
+
+	bool thirdPerson;
+	D3DXVECTOR3 playerPosition;
+
+	Camara *camara;
+
+
 	bool breakpoint;
 	vector2 uv1[32];
 	vector2 uv2[32];
@@ -88,13 +97,21 @@ public:
 		swapChain = 0;
 		backBufferTarget = 0;
 		IniciaD3D(hWnd);
-		izqder = 0;
-		arriaba = 0;
+
+		moveBackForward = 0.0f;
+		moveLeftRight = 0.0f;
+		camYaw = 0.0f;
+		camPitch = 0.0f;
+
+		thirdPerson = false;
+		playerPosition = D3DXVECTOR3(0.0f, 2.0f, 0.0f);
+
+
 //		billCargaFuego();
 		camara = new Camara(D3DXVECTOR3(0, 80, 6), D3DXVECTOR3(0, 80, 0), D3DXVECTOR3(0, 1, 0), Ancho, Alto);
 		terreno = new TerrenoRR(500, 500, d3dDevice, d3dContext);
 		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"Skydome.jpg");
-	//	billboard = new BillboardRR(L"Assets/Billboards/fuego-anim.png", L"Assets/Billboards/fuego-anim-normal.png", d3dDevice, d3dContext, 5);
+	//	billboard = new BillboardRR(L"Assetsets/Billboards/fuego-anim.png", L"Assets/Billboards/fuego-anim-normal.png", d3dDevice, d3dContext, 5);
 		//model = new ModeloRR(d3dDevice, d3dContext, "Assets/Cofre/Cofre.obj", L"Assets/Cofre/Cofre-color.png", L"Assets/Cofre/Cofre-spec.png", 0, 0);
 	
 		// Personajes del escenario
@@ -286,7 +303,7 @@ public:
 	void Render(void)
 	{
 		float sphere[3] = { 0,0,0 };
-		float prevPos[3] = { camara->posCam.x, camara->posCam.z, camara->posCam.z };
+		float prevPos[3] = { camara->Position.x, camara->Position.z, camara->Position.z };
 		static float angle = 0.0f;
 		angle += 0.005;
 		if (angle >= 360) angle = 0.0f;
@@ -297,40 +314,43 @@ public:
 		float clearColor[4] = { 0, 0, 0, 1.0f };
 		d3dContext->ClearRenderTargetView( backBufferTarget, clearColor );
 		d3dContext->ClearDepthStencilView( depthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0 );
-		camara->posCam.y = terreno->Superficie(camara->posCam.x, camara->posCam.z) + 5 ;
-		camara->UpdateCam(vel, arriaba, izqder);
-		skydome->Update(camara->vista, camara->proyeccion);
+	
+		camara->Position.y = terreno->Superficie(camara->Position.x, camara->Position.z) + 5 ;
+		
+		camara->UpdateCamera(moveBackForward, moveLeftRight, camYaw, camPitch);
+		
+		skydome->Update(camara->View, camara->Projection);
 
-		float camPosXZ[2] = { camara->posCam.x, camara->posCam.z };
+		float camPosXZ[2] = { camara->Position.x, camara->Position.z };
 
 		TurnOffDepth();
-		skydome->Render(camara->posCam);
+		skydome->Render(camara->Position);
 		TurnOnDepth();
-		terreno->Draw(camara->vista, camara->proyeccion);
+		terreno->Draw(camara->View, camara->Projection);
 		//TurnOnAlphaBlending();
 		//billboard->Draw(camara->vista, camara->proyeccion, camara->posCam,
 		//	-11, -78, 4, 5, uv1, uv2, uv3, uv4, frameBillboard);
 
 		//TurnOffAlphaBlending();
-		chavo3->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-90, 30), camara->posCam, 10.0f, 0, 'A', 0.5);
-		alien->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-58, 30), camara->posCam, 10.0f, 0, 'A', 0.5);
-		chava1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-15, 15), camara->posCam, 10.0f, 0, 'A', 0.5);
-		chava2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-40, 50), camara->posCam, 180.0f, 0, 'X', 0.5);
-	//	humano->Draw(camara->vista, camara->proyeccion, terreno->Superficie(36, 36), camara->posCam, 10.0f, 0, 'A', 0.5);
+		chavo3->Draw(camara->View, camara->Projection, terreno->Superficie(-90, 30), camara->Position, 10.0f, 0, 'A', 0.5);
+		alien->Draw(camara->View, camara->Projection, terreno->Superficie(-58, 30), camara->Position, 10.0f, 0, 'A', 0.5);
+		chava1->Draw(camara->View, camara->Projection, terreno->Superficie(-15, 15), camara->Position, 10.0f, 0, 'A', 0.5);
+		chava2->Draw(camara->View, camara->Projection, terreno->Superficie(-40, 50), camara->Position, 180.0f, 0, 'X', 0.5);
+	//	humano->Draw(camara->vist, camara->proyeccion, terreno->Superficie(36, 36), camara->posCam, 10.0f, 0, 'A', 0.5);
 
 
-		carrito->Draw(camara->vista, camara->proyeccion, terreno->Superficie(5, 5), camara->posCam, 10.0f, 0, 'A', 1);
-		cartel->Draw(camara->vista, camara->proyeccion, terreno->Superficie(7, 7), camara->posCam, 10.0f, 0, 'A', 0.5);
-		canasta->Draw(camara->vista, camara->proyeccion, terreno->Superficie(9, 9), camara->posCam, 10.0f, 0, 'A', 0.5);
-		refri_1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(13, 13), camara->posCam, 10.0f, 0, 'A', 1);
-		refri_2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(15, 15), camara->posCam, 10.0f, 0, 'A', 1);
-		repisa_1->Draw(camara->vista, camara->proyeccion, terreno->Superficie(17, 17), camara->posCam, 10.0f, 0, 'A', 1);
-		repisa_2->Draw(camara->vista, camara->proyeccion, terreno->Superficie(19, 19), camara->posCam, 10.0f, 0, 'A', 1);
-		mostrador->Draw(camara->vista, camara->proyeccion, terreno->Superficie(0, 0), camara->posCam, 10.0f, 0, 'A', 1.3);
-		banio->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-85, -5), camara->posCam, 10.0f, 0, 'A', 3);
-		bar->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-170, -100), camara->posCam, 10.0f, 0, 'A', 3.5);
-		hotel->Draw(camara->vista, camara->proyeccion, terreno->Superficie(-195, -50), camara->posCam, 10.0f, 0, 'A', 2.5);
-		oxxo->Draw(camara->vista, camara->proyeccion, terreno->Superficie(0, 0), camara->posCam, 10.0f, 0, 'A', 2.3);
+		carrito->Draw(camara->View, camara->Projection, terreno->Superficie(5, 5), camara->Position, 10.0f, 0, 'A', 1);
+		cartel->Draw(camara->View, camara->Projection, terreno->Superficie(7, 7), camara->Position, 10.0f, 0, 'A', 0.5);
+		canasta->Draw(camara->View, camara->Projection, terreno->Superficie(9, 9), camara->Position, 10.0f, 0, 'A', 0.5);
+		refri_1->Draw(camara->View, camara->Projection, terreno->Superficie(13, 13), camara->Position, 10.0f, 0, 'A', 1);
+		refri_2->Draw(camara->View, camara->Projection, terreno->Superficie(15, 15), camara->Position, 10.0f, 0, 'A', 1);
+		repisa_1->Draw(camara->View, camara->Projection, terreno->Superficie(17, 17), camara->Position, 10.0f, 0, 'A', 1);
+		repisa_2->Draw(camara->View, camara->Projection, terreno->Superficie(19, 19), camara->Position, 10.0f, 0, 'A', 1);
+		mostrador->Draw(camara->View, camara->Projection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 1.3);
+		banio->Draw(camara->View, camara->Projection, terreno->Superficie(-85, -5), camara->Position, 10.0f, 0, 'A', 3);
+		bar->Draw(camara->View, camara->Projection, terreno->Superficie(-170, -100), camara->Position, 10.0f, 0, 'A', 3.5);
+		hotel->Draw(camara->View, camara->Projection, terreno->Superficie(-195, -50), camara->Position, 10.0f, 0, 'A', 2.5);
+		oxxo->Draw(camara->View, camara->Projection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 2.3);
 
 		swapChain->Present( 1, 0 );
 	}
@@ -449,6 +469,37 @@ public:
 		d3dContext->OMSetDepthStencilState(depthStencilDisabledState, 1);
 	}
 
+	void UpdateCameraFromInput()
+	{
+		if (thirdPerson)
+		{
+			camara->UpdateThirdPerson(
+				playerPosition,
+				moveBackForward,
+				moveLeftRight,
+				camYaw,
+				camPitch,
+				8.0f,
+				2.0f
+			);
+		}
+		else
+		{
+			camara->UpdateCamera(
+				moveBackForward,
+				moveLeftRight,
+				camYaw,
+				camPitch
+			);
+		}
+
+		// input por frame
+		moveBackForward = 0.0f;
+		moveLeftRight = 0.0f;
+		camYaw = 0.0f;
+		camPitch = 0.0f;
+	}
+
 	void billCargaFuego()
 	{
 		uv1[0].u = .125;
@@ -509,6 +560,9 @@ public:
 			uv4[j + 24].v = 1;
 		}
 	}
+
+
+
 
 };
 #endif

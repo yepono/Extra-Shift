@@ -5,6 +5,7 @@
 #include "GamePadRR.h"
 #include <dinput.h>
 #include <xinput.h>
+#include <cmath>
 
 #pragma comment (lib, "d3d11.lib")
 #pragma comment (lib, "d3dx11.lib")
@@ -22,16 +23,38 @@ tagPOINT actualPoint;
 LPDIRECTINPUT8 m_pDirectInput = NULL;
 LPDIRECTINPUTDEVICE8 m_pKeyboardDevice = NULL;
 LPDIRECTINPUTDEVICE8 m_pMouseDevice = NULL;
+bool cKeyWasDown = false;
 
-void createMouseDevice(HWND hWnd) {
-    m_pDirectInput->CreateDevice(GUID_SysMouse, &m_pMouseDevice, 0);
+void createMouseDevice(HWND hWnd)
+{
+    HRESULT result;
 
-    m_pMouseDevice->SetDataFormat(&c_dfDIMouse);
+    result = m_pDirectInput->CreateDevice(
+        GUID_SysMouse,
+        &m_pMouseDevice,
+        0
+    );
 
-    m_pMouseDevice->SetCooperativeLevel(hWnd, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE);
+    if (FAILED(result))
+        return;
+
+    result = m_pMouseDevice->SetDataFormat(
+        &c_dfDIMouse
+    );
+
+    if (FAILED(result))
+        return;
+
+    result = m_pMouseDevice->SetCooperativeLevel(
+        hWnd,
+        DISCL_EXCLUSIVE |
+        DISCL_FOREGROUND
+    );
+
+    if (FAILED(result))
+        return;
 
     m_pMouseDevice->Acquire();
-
 }
 
 void createKeyboardDevice(HWND hWnd) {
@@ -44,6 +67,231 @@ void createKeyboardDevice(HWND hWnd) {
     m_pKeyboardDevice->Acquire();
 
 }
+
+void ProcessInput(HWND hWnd)
+{
+    if (!dxrr)
+        return;
+
+    BYTE keyboardData[256] = {};
+    DIMOUSESTATE mouseData = {};
+
+    HRESULT keyboardResult =
+        m_pKeyboardDevice->GetDeviceState(
+            sizeof(keyboardData),
+            keyboardData
+        );
+
+    if (FAILED(keyboardResult))
+    {
+        m_pKeyboardDevice->Acquire();
+        return;
+    }
+
+    HRESULT mouseResult =
+        m_pMouseDevice->GetDeviceState(
+            sizeof(mouseData),
+            &mouseData
+        );
+
+    if (FAILED(mouseResult))
+    {
+        m_pMouseDevice->Acquire();
+    }
+
+    // limpiar valores del frame anterior.
+    dxrr->moveBackForward = 0.0f;
+    dxrr->moveLeftRight = 0.0f;
+    dxrr->camYaw = 0.0f;
+    dxrr->camPitch = 0.0f;
+
+    const float movementSpeed = 0.15f;
+    const float keyboardLookSpeed = 0.025f;
+
+    // movimiento WASD
+
+    if (keyboardData[DIK_W] & 0x80)
+        dxrr->moveBackForward += movementSpeed;
+
+    if (keyboardData[DIK_S] & 0x80)
+        dxrr->moveBackForward -= movementSpeed;
+
+    if (keyboardData[DIK_A] & 0x80)
+        dxrr->moveLeftRight -= movementSpeed;
+
+    if (keyboardData[DIK_D] & 0x80)
+        dxrr->moveLeftRight += movementSpeed;
+
+    // Rotacion de la camara
+
+    if (keyboardData[DIK_LEFT] & 0x80)
+        dxrr->camYaw -= keyboardLookSpeed;
+
+    if (keyboardData[DIK_RIGHT] & 0x80)
+        dxrr->camYaw += keyboardLookSpeed;
+
+    if (keyboardData[DIK_UP] & 0x80)
+        dxrr->camPitch -= keyboardLookSpeed;
+
+    if (keyboardData[DIK_DOWN] & 0x80)
+        dxrr->camPitch += keyboardLookSpeed;
+
+    // Toggle tercera persona con c
+
+    bool cKeyIsDown =
+        (keyboardData[DIK_C] & 0x80) != 0;
+
+    if (cKeyIsDown && !cKeyWasDown)
+    {
+        dxrr->thirdPerson = !dxrr->thirdPerson;
+
+        // El jugador se posiciona en la camara al cambiar a tp
+        if (dxrr->thirdPerson)
+        {
+            dxrr->playerPosition = dxrr->camara->Position;
+        }
+    }
+
+    cKeyWasDown = cKeyIsDown;
+
+    // Escape
+
+    if (keyboardData[DIK_ESCAPE] & 0x80)
+    {
+        KillTimer(hWnd, 100);
+        PostQuitMessage(0);
+        return;
+    }
+
+    // Rotacion de la camara con mouse
+
+    if (SUCCEEDED(mouseResult))
+    {
+        const float mouseSensitivity = 0.0025f;
+
+        dxrr->camYaw +=
+            static_cast<float>(mouseData.lX) *
+            mouseSensitivity;
+
+        dxrr->camPitch -=
+            static_cast<float>(mouseData.lY) *
+            mouseSensitivity;
+    }
+
+    // Gamepad input
+
+    if (gamePad)
+    {
+        XINPUT_STATE gamepadState;
+
+        if (gamePad->GetState(gamepadState))
+        {
+            const XINPUT_GAMEPAD& pad =
+                gamepadState.Gamepad;
+
+            auto NormalizeStick =
+                [](SHORT value) -> float
+                {
+                    if (value >= 0)
+                    {
+                        return static_cast<float>(value) /
+                            32767.0f;
+                    }
+
+                    return static_cast<float>(value) /
+                        32768.0f;
+                };
+
+            float leftX =
+                NormalizeStick(pad.sThumbLX);
+
+            float leftY =
+                NormalizeStick(pad.sThumbLY);
+
+            float rightX =
+                NormalizeStick(pad.sThumbRX);
+
+            float rightY =
+                NormalizeStick(pad.sThumbRY);
+
+            const float deadZone = 0.19f;
+
+            if (fabsf(leftX) < deadZone)
+                leftX = 0.0f;
+
+            if (fabsf(leftY) < deadZone)
+                leftY = 0.0f;
+
+            if (fabsf(rightX) < deadZone)
+                rightX = 0.0f;
+
+            if (fabsf(rightY) < deadZone)
+                rightY = 0.0f;
+
+            const float gamepadMoveSpeed = 0.15f;
+            const float gamepadLookSpeed = 0.035f;
+
+            // Left stick controls movement.
+            dxrr->moveLeftRight +=
+                leftX * gamepadMoveSpeed;
+
+            dxrr->moveBackForward +=
+                leftY * gamepadMoveSpeed;
+
+            // Right stick controls camera rotation.
+            dxrr->camYaw +=
+                rightX * gamepadLookSpeed;
+
+            dxrr->camPitch -=
+                rightY * gamepadLookSpeed;
+
+            // Right shoulder: faster movement.
+            if (pad.wButtons &
+                XINPUT_GAMEPAD_RIGHT_SHOULDER)
+            {
+                dxrr->moveBackForward *= 3.0f;
+                dxrr->moveLeftRight *= 3.0f;
+            }
+
+            // Left shoulder: slower movement.
+            if (pad.wButtons &
+                XINPUT_GAMEPAD_LEFT_SHOULDER)
+            {
+                dxrr->moveBackForward *= 0.33f;
+                dxrr->moveLeftRight *= 0.33f;
+            }
+
+            // toggle camera using the gamepad B button.
+            static bool previousB = false;
+
+            bool bIsDown =
+                (pad.wButtons & XINPUT_GAMEPAD_B) != 0;
+
+            if (bIsDown && !previousB)
+            {
+                dxrr->thirdPerson =
+                    !dxrr->thirdPerson;
+
+                if (dxrr->thirdPerson)
+                {
+                    dxrr->playerPosition =
+                        dxrr->camara->Position;
+                }
+            }
+
+            previousB = bIsDown;
+        }
+    }
+
+    dxrr->UpdateCameraFromInput();
+    SetCursorPos(
+        actualPoint.x,
+        actualPoint.y
+    );
+
+    ShowCursor(FALSE);
+}
+
 
 int WINAPI WinMain(HINSTANCE hInstance,
                    HINSTANCE hPrevInstance,
@@ -99,7 +347,7 @@ int WINAPI WinMain(HINSTANCE hInstance,
 
     ShowWindow(hWnd, nCmdShow);
 	dxrr = new DXRR(hWnd, 800, 600);
-	dxrr->vel=0;
+	dxrr->moveBackForward=0;
     gamePad = new GamePadRR(1);
 
     ClientToScreen(hWnd, &initialPoint);
@@ -124,10 +372,11 @@ int WINAPI WinMain(HINSTANCE hInstance,
                 break;
         }
 
+        ProcessInput(hWnd);
         dxrr->Render();
     }
 
-    if (m_pMouseDevice) {
+    /*if (m_pMouseDevice) {
         m_pMouseDevice->Unacquire();
         m_pMouseDevice->Release();
     }
@@ -143,100 +392,35 @@ int WINAPI WinMain(HINSTANCE hInstance,
         m_pDirectInput->Release();
     m_pDirectInput = NULL;
 
-    return msg.wParam;
+    return msg.wParam;*/
 }
 
 
-LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+LRESULT CALLBACK WindowProc(
+    HWND hWnd,
+    UINT message,
+    WPARAM wParam,
+    LPARAM lParam)
 {
-    float xPos = 0;
-    float yPos = 0;
-
-    switch(message)
+    switch (message)
     {
-        case WM_DESTROY:
-            {
-				KillTimer(hWnd, 100);
-                PostQuitMessage(0);
-                return 0;
-            } break;
-
-		case WM_TIMER:
-			{
-
-			} break;
-        
-        case WM_MOUSEMOVE: {
-
-            SetCursorPos(actualPoint.x, actualPoint.y);
-            dxrr->frameBillboard++;
-            if (dxrr->frameBillboard == 32)
-                dxrr->frameBillboard = 0;
-
-            dxrr->izqder = 0;
-            dxrr->arriaba = 0;
-            dxrr->vel = 0;
-
-            char keyboardData[256];
-            m_pKeyboardDevice->GetDeviceState(sizeof(keyboardData), (void*)&keyboardData);
-
-            if (keyboardData[DIK_S] & 0x80) {
-                dxrr->vel = -5.f;
-            }
-
-
-            if (keyboardData[DIK_W] & 0x80) {
-                dxrr->vel = 5.f;
-            }
-
-            if (keyboardData[DIK_B] & 0x80) {
-                dxrr->breakpoint = true;
-            }
-
-            if (keyboardData[DIK_ESCAPE] & 0x80) {
-                KillTimer(hWnd, 100);
-                PostQuitMessage(0);
-                return 0;
-            }
-
-            DIMOUSESTATE mouseData;
-            m_pMouseDevice->GetDeviceState(sizeof(mouseData), (void*)&mouseData);
-
-            // Mouse move
-            dxrr->izqder = (mouseData.lX / 1000.0f);
-            dxrr->arriaba = -(mouseData.lY / 1000.0f);
-
-            if (gamePad->IsConnected())
-            {
-
-
-                float grados = (float)gamePad->GetState().Gamepad.sThumbRX / 32767.0;
-
-                if (grados > 0.19 || grados < -0.19) dxrr->izqder = grados / 15;
-
-                grados = (float)gamePad->GetState().Gamepad.sThumbRY / 32767.0;
-
-                if (grados > 0.19 || grados < -0.19)dxrr->arriaba = grados / 15;
-
-
-                float velocidad = (float)gamePad->GetState().Gamepad.sThumbLY / 32767.0;
-                if (velocidad > 0.19 || velocidad < -0.19) {
-                    if (gamePad->GetState().Gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER)
-                        velocidad *= 14.5;
-                    else if (gamePad->GetState().Gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) velocidad /= 3;
-                    else velocidad *= 2.5;
-                    if (velocidad > 0.19) dxrr->vel = velocidad;
-                    else if (velocidad < -0.19) dxrr->vel = velocidad;
-                }
-
-            }
-
-        }break;
-
+    case WM_DESTROY:
+    {
+        KillTimer(hWnd, 100);
+        PostQuitMessage(0);
+        return 0;
     }
 
-    return DefWindowProc (hWnd, message, wParam, lParam);
+    case WM_TIMER:
+    {
+        return 0;
+    }
+    }
+
+    return DefWindowProc(
+        hWnd,
+        message,
+        wParam,
+        lParam
+    );
 }
-
-
-

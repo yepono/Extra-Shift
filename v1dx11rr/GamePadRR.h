@@ -8,6 +8,9 @@
 #include <windows.h>
 #include <XInput.h> //libreria del Xbox solo gamepads o joysticks compatibles
 
+
+#pragma comment(lib, "Xinput9_1_0.lib")
+
 // XBOX Controller Class Definition
 class GamePadRR
 {
@@ -23,65 +26,53 @@ public:
 		numeroControlador = jugadorNumero - 1;
 	}
 
-    XINPUT_STATE GetState()
+    bool GetState(XINPUT_STATE& state)
 	{
 		// limpia la estructura del estado del gamepad
-		ZeroMemory(&estadoControlador, sizeof(XINPUT_STATE));
+		ZeroMemory(&state, sizeof(XINPUT_STATE));
 
 		// obtiene el estado del gamepad
-		XInputGetState(numeroControlador, &estadoControlador);
-
-		return estadoControlador;
+		DWORD result = XInputGetState(
+			numeroControlador,
+			&state
+		);
+		return result == ERROR_SUCCESS;
 	}
+
+    XINPUT_STATE GetState()
+    {
+        ZeroMemory(&estadoControlador, sizeof(XINPUT_STATE));
+
+        XInputGetState(
+            numeroControlador,
+            &estadoControlador
+        );
+
+        return estadoControlador;
+    }
 
     bool IsConnected()
-	{
-		// limpia la estructura de estado
-		ZeroMemory(&estadoControlador, sizeof(XINPUT_STATE));
+    {
+        XINPUT_STATE state;
 
-		// obtiene el estado
-		DWORD Resultado = XInputGetState(numeroControlador, &estadoControlador);
+        return GetState(state);
+    }
 
-		if(Resultado == ERROR_SUCCESS)
-		{
-			return true;
-		}
-		else
-		{
-			return false;
-		}
-	}
+    void Vibrate(
+        WORD leftValue = 0,
+        WORD rightValue = 0)
+    {
+        XINPUT_VIBRATION vibration;
+        ZeroMemory(&vibration, sizeof(XINPUT_VIBRATION));
 
-    void Vibrate(int leftVal = 0, int rightVal = 0)
-	{
-    // Createl estado de vibracion
-    XINPUT_VIBRATION Vibracion;
+        vibration.wLeftMotorSpeed = leftValue;
+        vibration.wRightMotorSpeed = rightValue;
 
-    // limpia los valores previos de la estructura
-    ZeroMemory(&Vibracion, sizeof(XINPUT_VIBRATION));
-
-    // establece los valores de vibracion
-    Vibracion.wLeftMotorSpeed = leftVal;
-    Vibracion.wRightMotorSpeed = rightVal;
-
-    // Vibra el controlador
-    XInputSetState(numeroControlador, &Vibracion);
-	}
-	//estas son las equivalencias a los botonazos mas comunes
-	/*XINPUT_GAMEPAD_DPAD_UP          0x00000001
-	XINPUT_GAMEPAD_DPAD_DOWN        0x00000002
-	XINPUT_GAMEPAD_DPAD_LEFT        0x00000004
-	XINPUT_GAMEPAD_DPAD_RIGHT       0x00000008
-	XINPUT_GAMEPAD_START            0x00000010
-	XINPUT_GAMEPAD_BACK             0x00000020
-	XINPUT_GAMEPAD_LEFT_THUMB       0x00000040
-	XINPUT_GAMEPAD_RIGHT_THUMB      0x00000080
-	XINPUT_GAMEPAD_LEFT_SHOULDER    0x0100
-	XINPUT_GAMEPAD_RIGHT_SHOULDER   0x0200
-	XINPUT_GAMEPAD_A                0x1000
-	XINPUT_GAMEPAD_B                0x2000
-	XINPUT_GAMEPAD_X                0x4000
-	XINPUT_GAMEPAD_Y                0x8000*/
+        XInputSetState(
+            numeroControlador,
+            &vibration
+        );
+    }
 };
 
 #endif
