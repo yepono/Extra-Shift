@@ -7,6 +7,11 @@
 #include <xinput.h>
 #include <cmath>
 
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+
 #pragma comment (lib, "d3d11.lib")
 #pragma comment (lib, "d3dx11.lib")
 #pragma comment (lib, "d3dx10.lib")
@@ -24,6 +29,13 @@ LPDIRECTINPUT8 m_pDirectInput = NULL;
 LPDIRECTINPUTDEVICE8 m_pKeyboardDevice = NULL;
 LPDIRECTINPUTDEVICE8 m_pMouseDevice = NULL;
 bool cKeyWasDown = false;
+
+void TestAssimp()
+{
+    Assimp::Importer importer;
+    const aiScene* scene = importer.ReadFile("test.obj", aiProcess_Triangulate);
+    // Even if the file doesn't exist, this compiling and linking means integration works
+}
 
 void createMouseDevice(HWND hWnd)
 {

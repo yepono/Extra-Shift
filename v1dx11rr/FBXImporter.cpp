@@ -1,0 +1,6 @@
+aiProcess_Triangulate
+aiProcess_GenSmoothNormals
+aiProcess_CalcTangentSpace
+aiProcess_JoinIdenticalVertices
+aiProcess_LimitBoneWeights
+aiProcess_ConvertToLeftHanded
