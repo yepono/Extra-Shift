@@ -105,7 +105,7 @@ void ProcessInput(HWND hWnd)
     dxrr->camYaw = 0.0f;
     dxrr->camPitch = 0.0f;
 
-    const float movementSpeed = 0.15f;
+    const float movementSpeed = 0.5f;
     const float keyboardLookSpeed = 0.025f;
 
     // movimiento WASD
@@ -173,7 +173,7 @@ void ProcessInput(HWND hWnd)
             static_cast<float>(mouseData.lX) *
             mouseSensitivity;
 
-        dxrr->camPitch -=
+        dxrr->camPitch +=
             static_cast<float>(mouseData.lY) *
             mouseSensitivity;
     }
@@ -228,7 +228,7 @@ void ProcessInput(HWND hWnd)
             if (fabsf(rightY) < deadZone)
                 rightY = 0.0f;
 
-            const float gamepadMoveSpeed = 0.15f;
+            const float gamepadMoveSpeed = 0.5f;
             const float gamepadLookSpeed = 0.035f;
 
             // Left stick controls movement.
@@ -274,8 +274,7 @@ void ProcessInput(HWND hWnd)
 
                 if (dxrr->thirdPerson)
                 {
-                    dxrr->playerPosition =
-                        dxrr->camara->Position;
+                    dxrr->playerPosition = dxrr->camara->Position;
                 }
             }
 
@@ -283,7 +282,7 @@ void ProcessInput(HWND hWnd)
         }
     }
 
-    dxrr->UpdateCameraFromInput();
+    //dxrr->UpdateCameraFromInput();
     SetCursorPos(
         actualPoint.x,
         actualPoint.y
@@ -346,10 +345,12 @@ int WINAPI WinMain(HINSTANCE hInstance,
                           NULL);
 
     ShowWindow(hWnd, nCmdShow);
-	dxrr = new DXRR(hWnd, 800, 600);
+	dxrr = new DXRR(hWnd, SCREEN_X, SCREEN_Y);
 	dxrr->moveBackForward=0;
     gamePad = new GamePadRR(1);
 
+    initialPoint.x = 0;
+    initialPoint.y = 0;
     ClientToScreen(hWnd, &initialPoint);
     actualPoint.x = initialPoint.x + SCREEN_X / 2;
     actualPoint.y = initialPoint.y + SCREEN_Y / 2;
@@ -376,23 +377,6 @@ int WINAPI WinMain(HINSTANCE hInstance,
         dxrr->Render();
     }
 
-    /*if (m_pMouseDevice) {
-        m_pMouseDevice->Unacquire();
-        m_pMouseDevice->Release();
-    }
-    m_pMouseDevice = NULL;
-
-    if (m_pKeyboardDevice) {
-        m_pKeyboardDevice->Unacquire();
-        m_pKeyboardDevice->Release();
-    }
-    m_pKeyboardDevice = NULL;
-
-    if (m_pDirectInput)
-        m_pDirectInput->Release();
-    m_pDirectInput = NULL;
-
-    return msg.wParam;*/
 }
 
 

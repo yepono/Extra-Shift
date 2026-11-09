@@ -44,7 +44,7 @@ public:
 
 		D3DXMatrixPerspectiveFovLH(
 			&Projection,
-			D3DXToRadian(45.0f),
+			D3DX_PI / 4.0f,
 			static_cast<float>(width) / static_cast<float>(height),
 			0.01f,
 			1000.0f

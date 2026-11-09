@@ -108,7 +108,12 @@ public:
 
 
 //		billCargaFuego();
-		camara = new Camara(D3DXVECTOR3(0, 80, 6), D3DXVECTOR3(0, 80, 0), D3DXVECTOR3(0, 1, 0), Ancho, Alto);
+		camara = new Camara(
+			D3DXVECTOR3(0.0f, 80.0f, 6.0f), 
+			D3DXVECTOR3(0.0f, 80.0f, 0.0f), 
+			D3DXVECTOR3(0.0f, 1.0f, 0.0f), 
+			Ancho, 
+			Alto);
 		terreno = new TerrenoRR(500, 500, d3dDevice, d3dContext);
 		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"Skydome.jpg");
 	//	billboard = new BillboardRR(L"Assetsets/Billboards/fuego-anim.png", L"Assets/Billboards/fuego-anim-normal.png", d3dDevice, d3dContext, 5);
@@ -132,7 +137,7 @@ public:
 		repisa_2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-2.obj", L"Assets/Modelos/objetos/repisa-2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 17, 17);
 		mostrador = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/mostrador.obj", L"Assets/Modelos/objetos/mostrador.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -75, 12);
 		banio = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/banio/banio.obj", L"Assets/Modelos/objetos/banio/banio1.png", L"Assets/Modelos/objetos/banio/banio2.png", -75, -10);
-		bar = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/bar.obj", L"Assets/Modelos/objetos/bar.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -170, 50);
+		bar = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/bar2.obj", L"Assets/Modelos/objetos/bar2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -170, 50);
 		hotel = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/hotel.obj", L"Assets/Modelos/objetos/hotel.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -310, -125);
 		oxxo = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/oxxo.obj", L"Assets/Modelos/objetos/oxxo.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -310, 110);
 
@@ -315,42 +320,63 @@ public:
 		d3dContext->ClearRenderTargetView( backBufferTarget, clearColor );
 		d3dContext->ClearDepthStencilView( depthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0 );
 	
-		camara->Position.y = terreno->Superficie(camara->Position.x, camara->Position.z) + 5 ;
+		// select first or third person
+		UpdateCameraFromInput();
+
+		if (!thirdPerson)
+		{
+			const float firstPersonEyeHeight = 3.7f;
+			camara->Position.y = terreno->Superficie(
+				camara->Position.x,
+				camara->Position.z
+			) + firstPersonEyeHeight;
+
+			D3DXVECTOR3 lookAt = camara->Position + camara->Target;
+			D3DXMatrixLookAtLH(
+				&camara->View,
+				&camara->Position,
+				&lookAt,
+				&camara->Up
+			);
+		}
 		
-		camara->UpdateCamera(moveBackForward, moveLeftRight, camYaw, camPitch);
-		
-		skydome->Update(camara->View, camara->Projection);
+		// The shaders multiply row vectors by their matrices.  Transpose the
+		// CPU-side view and projection matrices before uploading them.
+		D3DXMATRIX gpuView;
+		D3DXMATRIX gpuProjection;
+		D3DXMatrixTranspose(&gpuView, &camara->View);
+		D3DXMatrixTranspose(&gpuProjection, &camara->Projection);
+		skydome->Update(gpuView, gpuProjection);
 
 		float camPosXZ[2] = { camara->Position.x, camara->Position.z };
 
 		TurnOffDepth();
 		skydome->Render(camara->Position);
 		TurnOnDepth();
-		terreno->Draw(camara->View, camara->Projection);
-		//TurnOnAlphaBlending();
+        terreno->Draw(gpuView, gpuProjection);
+		TurnOnAlphaBlending();
 		//billboard->Draw(camara->vista, camara->proyeccion, camara->posCam,
 		//	-11, -78, 4, 5, uv1, uv2, uv3, uv4, frameBillboard);
 
-		//TurnOffAlphaBlending();
-		chavo3->Draw(camara->View, camara->Projection, terreno->Superficie(-90, 30), camara->Position, 10.0f, 0, 'A', 0.5);
-		alien->Draw(camara->View, camara->Projection, terreno->Superficie(-58, 30), camara->Position, 10.0f, 0, 'A', 0.5);
-		chava1->Draw(camara->View, camara->Projection, terreno->Superficie(-15, 15), camara->Position, 10.0f, 0, 'A', 0.5);
-		chava2->Draw(camara->View, camara->Projection, terreno->Superficie(-40, 50), camara->Position, 180.0f, 0, 'X', 0.5);
-	//	humano->Draw(camara->vist, camara->proyeccion, terreno->Superficie(36, 36), camara->posCam, 10.0f, 0, 'A', 0.5);
+		TurnOffAlphaBlending();
+		chavo3->Draw(gpuView, gpuProjection, terreno->Superficie(-90, 30), camara->Position, 10.0f, 0, 'A', 0.5);
+		alien->Draw(gpuView, gpuProjection, terreno->Superficie(-58, 30), camara->Position, 10.0f, 0, 'A', 0.5);
+		chava1->Draw(gpuView, gpuProjection, terreno->Superficie(-15, 15), camara->Position, 10.0f, 0, 'A', 0.5);
+		chava2->Draw(gpuView, gpuProjection, terreno->Superficie(-40, 50), camara->Position, 180.0f, 0, 'X', 0.5);
 
 
-		carrito->Draw(camara->View, camara->Projection, terreno->Superficie(5, 5), camara->Position, 10.0f, 0, 'A', 1);
-		cartel->Draw(camara->View, camara->Projection, terreno->Superficie(7, 7), camara->Position, 10.0f, 0, 'A', 0.5);
-		canasta->Draw(camara->View, camara->Projection, terreno->Superficie(9, 9), camara->Position, 10.0f, 0, 'A', 0.5);
-		refri_1->Draw(camara->View, camara->Projection, terreno->Superficie(13, 13), camara->Position, 10.0f, 0, 'A', 1);
-		refri_2->Draw(camara->View, camara->Projection, terreno->Superficie(15, 15), camara->Position, 10.0f, 0, 'A', 1);
-		repisa_1->Draw(camara->View, camara->Projection, terreno->Superficie(17, 17), camara->Position, 10.0f, 0, 'A', 1);
-		repisa_2->Draw(camara->View, camara->Projection, terreno->Superficie(19, 19), camara->Position, 10.0f, 0, 'A', 1);
-		mostrador->Draw(camara->View, camara->Projection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 1.3);
-		banio->Draw(camara->View, camara->Projection, terreno->Superficie(-85, -5), camara->Position, 10.0f, 0, 'A', 3);
-		bar->Draw(camara->View, camara->Projection, terreno->Superficie(-170, -100), camara->Position, 10.0f, 0, 'A', 3.5);
-		hotel->Draw(camara->View, camara->Projection, terreno->Superficie(-195, -50), camara->Position, 10.0f, 0, 'A', 2.5);
-		oxxo->Draw(camara->View, camara->Projection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 2.3);
+		carrito->Draw(gpuView, gpuProjection, terreno->Superficie(5, 5), camara->Position, 10.0f, 0, 'A', 1);
+		cartel->Draw(gpuView, gpuProjection, terreno->Superficie(7, 7), camara->Position, 10.0f, 0, 'A', 0.5);
+		canasta->Draw(gpuView, gpuProjection, terreno->Superficie(9, 9), camara->Position, 10.0f, 0, 'A', 0.5);
+		refri_1->Draw(gpuView, gpuProjection, terreno->Superficie(13, 13), camara->Position, 10.0f, 0, 'A', 1);
+		refri_2->Draw(gpuView, gpuProjection, terreno->Superficie(15, 15), camara->Position, 10.0f, 0, 'A', 1);
+		repisa_1->Draw(gpuView, gpuProjection, terreno->Superficie(17, 17), camara->Position, 10.0f, 0, 'A', 1);
+		repisa_2->Draw(gpuView, gpuProjection, terreno->Superficie(19, 19), camara->Position, 10.0f, 0, 'A', 1);
+		mostrador->Draw(gpuView, gpuProjection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 1.3);
+		banio->Draw(gpuView, gpuProjection, terreno->Superficie(-85, -5), camara->Position, 10.0f, 0, 'A', 3);
+		bar->Draw(gpuView, gpuProjection, terreno->Superficie(-170, -100), camara->Position, 10.0f, 0, 'A', 3.5);
+		hotel->Draw(gpuView, gpuProjection, terreno->Superficie(-195, -50), camara->Position, 10.0f, 0, 'A', 2.5);
+		oxxo->Draw(gpuView, gpuProjection, terreno->Superficie(0, 0), camara->Position, 10.0f, 0, 'A', 2.3);
 
 		swapChain->Present( 1, 0 );
 	}
@@ -480,7 +506,7 @@ public:
 				camYaw,
 				camPitch,
 				8.0f,
-				2.0f
+				1.5f
 			);
 		}
 		else
