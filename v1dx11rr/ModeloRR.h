@@ -12,6 +12,7 @@
 #include <vector>
 #include <iostream>
 #include "loadModel.h"
+#include "Colision.h"
 
 using namespace std;
 
@@ -72,6 +73,11 @@ private:
 	float posX;
 	float posZ;
 
+	// Limites de la malla en coordenadas locales (para generar colisiones).
+	D3DXVECTOR3 minLocal;
+	D3DXVECTOR3 maxLocal;
+	bool tieneLimites;
+
 public:
 	ModeloRR(ID3D11Device* D3DDevice, ID3D11DeviceContext* D3DContext, char* ModelPath, WCHAR* colorTexturePath, WCHAR* specularTexturePath, float _posX, float _posZ)
 	{
@@ -81,6 +87,9 @@ public:
 
 		posX = _posX;
 		posZ = _posZ;
+
+		minLocal = maxLocal = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+		tieneLimites = false;
 
 		//aqui cargamos las texturas de alturas y el cesped
 		CargaParametros(ModelPath, colorTexturePath, specularTexturePath);//L"Assets/Tent-Tower/tent_diffuse.jpg"
@@ -99,6 +108,143 @@ public:
 	
 	float getPosZ() {
 		return this->posZ;
+	}
+
+	bool TieneLimites() const
+	{
+		return tieneLimites;
+	}
+
+	D3DXVECTOR3 GetMinLocal() const
+	{
+		return minLocal;
+	}
+
+	D3DXVECTOR3 GetMaxLocal() const
+	{
+		return maxLocal;
+	}
+
+	// Matriz de mundo que usa Draw (rotacion * escala * traslacion).
+	// D3DX usa vectores fila: punto * matriz.
+	D3DXMATRIX MatrizMundo(float ypos, float rot, char angle, float scale) const
+	{
+		D3DXMATRIX rotacion;
+		D3DXMatrixIdentity(&rotacion);
+
+		if (angle == 'X')
+			D3DXMatrixRotationX(&rotacion, rot);
+		else if (angle == 'Y')
+			D3DXMatrixRotationY(&rotacion, rot);
+		else if (angle == 'Z')
+			D3DXMatrixRotationZ(&rotacion, rot);
+
+		D3DXMATRIX escalado;
+		D3DXMatrixScaling(&escalado, scale, scale, scale);
+
+		D3DXMATRIX traslacion;
+		D3DXMatrixTranslation(&traslacion, posX, ypos, posZ);
+
+		return rotacion * escalado * traslacion;
+	}
+
+	// Agrega una caja definida en coordenadas locales del modelo.
+	// Util para muros/pisos interiores de un edificio: se colocan en el
+	// espacio del modelo y esta funcion los lleva al mundo.
+	bool AgregarCajaLocal(
+		SistemaColision& sistema,
+		const D3DXVECTOR3& minimoLocal,
+		const D3DXVECTOR3& maximoLocal,
+		float ypos,
+		float rot,
+		char angle,
+		float scale,
+		bool solido = true,
+		bool soporta = false,
+		const char* nombre = nullptr) const
+	{
+		const D3DXMATRIX mundo = MatrizMundo(ypos, rot, angle, scale);
+
+		D3DXVECTOR3 minimo(1.0e30f, 1.0e30f, 1.0e30f);
+		D3DXVECTOR3 maximo(-1.0e30f, -1.0e30f, -1.0e30f);
+
+		for (int i = 0; i < 8; ++i)
+		{
+			D3DXVECTOR3 esquina(
+				(i & 1) ? maximoLocal.x : minimoLocal.x,
+				(i & 2) ? maximoLocal.y : minimoLocal.y,
+				(i & 4) ? maximoLocal.z : minimoLocal.z);
+
+			D3DXVECTOR3 punto;
+			D3DXVec3TransformCoord(&punto, &esquina, &mundo);
+
+			if (punto.x < minimo.x) minimo.x = punto.x;
+			if (punto.y < minimo.y) minimo.y = punto.y;
+			if (punto.z < minimo.z) minimo.z = punto.z;
+
+			if (punto.x > maximo.x) maximo.x = punto.x;
+			if (punto.y > maximo.y) maximo.y = punto.y;
+			if (punto.z > maximo.z) maximo.z = punto.z;
+		}
+
+		sistema.AgregarCajaMinMax(minimo, maximo, solido, soporta, nombre);
+		return true;
+	}
+
+	// Caja que encierra toda la malla del modelo con la misma
+	// transformacion que usa Draw. Debe pasarse el mismo `ypos`, `rot`,
+	// `angle` y `scale` con los que se dibuja el modelo.
+	bool AgregarCajaColision(
+		SistemaColision& sistema,
+		float ypos,
+		float rot,
+		char angle,
+		float scale,
+		bool solido = true,
+		bool soporta = false,
+		const char* nombre = nullptr) const
+	{
+		if (!tieneLimites)
+			return false;
+
+		return AgregarCajaLocal(
+			sistema,
+			minLocal,
+			maxLocal,
+			ypos,
+			rot,
+			angle,
+			scale,
+			solido,
+			soporta,
+			nombre);
+	}
+
+	// Calcula la caja envolvente de la malla en espacio local.
+	void CalculaLimitesLocales()
+	{
+		tieneLimites = false;
+
+		if (m_ObjParser.m_pVertex == nullptr || m_ObjParser.m_nVertexCount == 0)
+			return;
+
+		minLocal = D3DXVECTOR3(1.0e30f, 1.0e30f, 1.0e30f);
+		maxLocal = D3DXVECTOR3(-1.0e30f, -1.0e30f, -1.0e30f);
+
+		for (unsigned long i = 0; i < m_ObjParser.m_nVertexCount; ++i)
+		{
+			const XMFLOAT3& p = m_ObjParser.m_pVertex[i].pos;
+
+			if (p.x < minLocal.x) minLocal.x = p.x;
+			if (p.y < minLocal.y) minLocal.y = p.y;
+			if (p.z < minLocal.z) minLocal.z = p.z;
+
+			if (p.x > maxLocal.x) maxLocal.x = p.x;
+			if (p.y > maxLocal.y) maxLocal.y = p.y;
+			if (p.z > maxLocal.z) maxLocal.z = p.z;
+		}
+
+		tieneLimites = true;
 	}
 
 	bool CompileD3DShader(WCHAR* filePath, char* entry, char* shaderModel, ID3DBlob** buffer)
@@ -199,6 +345,7 @@ public:
 
 		//aqui va la carga del modelo con el metodo creadoModelPath
 		m_ObjParser.LoadFile(ModelPath); //"Assets/Tent-Tower/Tienda-Top.obj"
+		CalculaLimitesLocales();
 		//proceso de guardar el buffer de vertices para su uso en el render
 		D3D11_BUFFER_DESC vertexDesc;
 		ZeroMemory(&vertexDesc, sizeof(vertexDesc));

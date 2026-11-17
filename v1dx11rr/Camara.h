@@ -5,6 +5,8 @@
 #include <D3DX11.h>
 #include <D3DX10math.h>
 
+#include "Colision.h"
+
 class Camara{
 public:
 	D3DXVECTOR3 Position;
@@ -23,6 +25,11 @@ public:
 	// yaw: rotacion horizontal; pitch: rotacion vertical
 	float Yaw;
 	float Pitch;
+
+	// Colision del jugador. Si no se configura, la camara se mueve como antes.
+	SistemaColision* colision = nullptr;
+	float colisionRadio = 1.0f;
+	float colisionAltura = 4.0f;
 
 	Camara(
 		D3DXVECTOR3 position,
@@ -44,7 +51,7 @@ public:
 
 		D3DXMatrixPerspectiveFovLH(
 			&Projection,
-			D3DX_PI / 4.0f,
+			D3DX_PI / 3.0f,
 			static_cast<float>(width) / static_cast<float>(height),
 			0.01f,
 			1000.0f
@@ -60,12 +67,15 @@ public:
 		Pitch = 0.0f;
 	}
 
-	void UpdateCamera(
+	// Primera persona: la camara se coloca en los ojos del jugador.
+	// se toma el playerPosition para que al alternar entre ambos modos no se acumule desplazamiento.
+	void UpdateFirstPerson(
+		D3DXVECTOR3& playerPosition,
 		float moveBackForward,
 		float moveLeftRight,
 		float yaw,
-		float pitch)
-
+		float pitch,
+		float eyeHeight)
 	{
 		Yaw += yaw;
 		Pitch += pitch;
@@ -115,9 +125,12 @@ public:
 		D3DXVec3Normalize(&Forward, &Forward);
 		D3DXVec3Normalize(&Right, &Right);
 
-		// Aplicar el movimeinto
-		Position += Forward * moveBackForward;
-		Position += Right * moveLeftRight;
+		// Mover al jugador (no a la camara).
+		MoverJugador(playerPosition, moveBackForward, moveLeftRight);
+
+		// La camara vive en los ojos del jugador.
+		Position = playerPosition;
+		Position.y += eyeHeight;
 
 		// el target es una direccion relativa a la camara
 		D3DXVECTOR3 lookAt = Position + Target;
@@ -128,7 +141,6 @@ public:
 			&lookAt,
 			&Up
 		);
-
 	}
 
 // c es para togglear la primera persona y la tercera
@@ -205,8 +217,7 @@ public:
 		);
 
 		// Move the player.
-		playerPosition += Forward * moveBackForward;
-		playerPosition += Right * moveLeftRight;
+		MoverJugador(playerPosition, moveBackForward, moveLeftRight);
 
 		// The point that the camera follows.
 		D3DXVECTOR3 focusPoint = playerPosition;
@@ -224,6 +235,63 @@ public:
 			&Target,
 			&Up
 		);
+	}
+
+	void ConfigurarColision(SistemaColision* sistema, float radio, float altura)
+	{
+		colision = sistema;
+		colisionRadio = radio;
+		colisionAltura = altura;
+	}
+
+	// Aplica el desplazamiento horizontal del frame al jugador usando el
+	// sistema de colision (si existe). La altura se ajusta aparte.
+	void MoverJugador(
+		D3DXVECTOR3& playerPosition,
+		float moveBackForward,
+		float moveLeftRight)
+	{
+		D3DXVECTOR3 desplazamiento =
+			Forward * moveBackForward +
+			Right * moveLeftRight;
+
+		if (colision != nullptr)
+		{
+			playerPosition = colision->Mover(
+				playerPosition,
+				desplazamiento,
+				colisionRadio,
+				colisionAltura);
+		}
+		else
+		{
+			playerPosition += desplazamiento;
+		}
+	}
+
+	// Corrige la altura de la camara cuando el suelo cambia (terreno o
+	// piso de un edificio). La vista se reconstruye con la nueva altura.
+	void DesplazarVertical(float deltaY, bool terceraPersona)
+	{
+		if (deltaY == 0.0f)
+			return;
+
+		Position.y += deltaY;
+
+		D3DXVECTOR3 lookAt;
+
+		if (terceraPersona)
+		{
+			Target.y += deltaY;
+			lookAt = Target;
+		}
+		else
+		{
+			// En primera persona, Target es una direccion, no un punto.
+			lookAt = Position + Target;
+		}
+
+		D3DXMatrixLookAtLH(&View, &Position, &lookAt, &Up);
 	}
 
 	D3DXVECTOR2 GetXZ() const

@@ -1,30 +1,19 @@
+// Shader de los billboards: quads con una imagen que siempre miran a la
+// camara. Las matrices se pasan en fila (row_major) y se multiplican con
+// el vector a la izquierda, igual que en DepuradorColision y PanelRR.
+
 Texture2D colorMap : register(t0);
-Texture2D normalMap : register(t1);
 SamplerState colorSampler : register(s0);
 
-// Texture2D colorMap  : register(t0);
-// Texture2D colorMap2 : register(t1);
-// Texture2D colorMap3 : register(t2);
-// Texture2D blendMap  : register(t3);
-
-cbuffer cbChangerEveryFrame : register(b0)
+cbuffer Matrices : register(b0)
 {
-	matrix worldMatrix;
-};
-
-cbuffer cbNeverChanges : register(b1)
-{
-	matrix viewMatrix;
-};
-
-cbuffer cbChangeOnResize : register(b2)
-{
-	matrix projMatrix;
+	row_major float4x4 mundo;
+	row_major float4x4 vistaProyeccion;
 };
 
 struct VS_Input
 {
-	float4 pos : POSITION;
+	float3 pos : POSITION;
 	float2 tex0 : TEXCOORD0;
 };
 
@@ -36,52 +25,22 @@ struct PS_Input
 
 PS_Input VS_Main(VS_Input vertex)
 {
-	PS_Input vsOut = (PS_Input)0;
-	vsOut.pos = mul(vertex.pos, worldMatrix);
-	vsOut.pos = mul(vsOut.pos, viewMatrix);
-	vsOut.pos = mul(vsOut.pos, projMatrix);
+	PS_Input salida;
 
-	vsOut.tex0 = vertex.tex0;
+	// El vertice solo trae XYZ: la W debe ser 1 para que la traslacion
+	// de la matriz de mundo se aplique.
+	salida.pos = mul(mul(float4(vertex.pos, 1.0f), mundo), vistaProyeccion);
+	salida.tex0 = vertex.tex0;
 
-
-
-	return vsOut;
+	return salida;
 }
 
 float4 PS_Main(PS_Input pix) : SV_TARGET
 {
-	float3 ambient = float3(0.1f, 0.1f, 0.1f);
+	float4 color = colorMap.Sample(colorSampler, pix.tex0);
 
-	float4 text = colorMap.Sample(colorSampler, pix.tex0);
-	float intensity = 0.4;
-	if (text.a < 0.1)
-	//if(text.r >= intensity && text.g >= intensity && text.b >= intensity)
-	{
-		clip(-1);
-		return 0;
-	}
-	else {
-		//aqui se calcula la iluminacion difusa
-		float4 textnorm = normalMap.Sample(colorSampler, pix.tex0);
-		float4 LuzAmbiental = float4(1.0, 1.0, 1.0, 1);
-		float FA = 0.3;
-		///////////////////////////////////////////////
-		// aqui se desarrolla el elemento ambiental
-		///////////////////////////////////////////////
-		float4 AportAmb = LuzAmbiental * FA;
-		//////////////////////////////////////////
-		//aqui se desarrolla el elemento difuso //
-		//////////////////////////////////////////
-		float3 DirLuz = float3(30, 10, 30);
-		float4 LuzDifusa = float4(1, 1, 1, 1);
-		float FAD = 1;
-	
-		float3 bump = normalize(2.0 * textnorm - 1.0);
-	
-		float FALL = dot(normalize(bump), normalize(DirLuz));
-		float4 AportLuzDif = saturate(LuzDifusa * FALL * FAD);
-		text = text * (AportAmb + AportLuzDif );
-		text.a = 1;
-		return text; //* (aportAmb + aportDif);
-	}
+	// Los pixeles transparentes no se dibujan y tampoco escriben depth.
+	clip(color.a - 0.01f);
+
+	return color;
 }

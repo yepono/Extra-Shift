@@ -36,6 +36,9 @@
     <ClInclude Include="ModeloRR.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+    <ClInclude Include="PanelRR.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
     <ClInclude Include="loadModel.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
@@ -57,6 +60,9 @@
     <ClInclude Include="AnimatedModel.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
+    <ClInclude Include="TextoPantalla.h">
+      <Filter>Archivos de encabezado</Filter>
+    </ClInclude>
     <ClInclude Include="TextureLoader.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
@@ -75,6 +81,7 @@
     <None Include="Billboard.hlsl">
       <Filter>Archivos de código fuente</Filter>
     </None>
+    <None Include="SkinnedModel.fx" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="TerrenoSkyBill.cpp">
@@ -92,8 +99,8 @@
     <ClCompile Include="TextureLoader.cpp">
       <Filter>Archivos de código fuente</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <FxCompile Include="SkinnedModel.fx" />
+    <ClCompile Include="AnimatedModel.cpp">
+      <Filter>Archivos de código fuente</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

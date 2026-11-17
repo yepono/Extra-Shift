@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <windowsx.h>
 #include "Terrain.h"
+#include "Timer.h"
  
  #define SCREEN_WIDTH  900
  #define SCREEN_HEIGHT 700
@@ -12,7 +13,7 @@ TerrainClass *DirXRR;
 
 
 
- int WINAPI WinMain(HINSTANCE hInstance,
+/* int WINAPI WinMain(HINSTANCE hInstance,
                     HINSTANCE hPrevInstance,
                     LPSTR lpCmdLine,
                     int nCmdShow)
@@ -53,7 +54,7 @@ TerrainClass *DirXRR;
 
 	 MSG msg = {0};
 
-	 while(msg.message != WM_QUIT)
+	 /*while (msg.message != WM_QUIT)
      {
          if(PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
          {
@@ -66,6 +67,21 @@ TerrainClass *DirXRR;
 			 DirXRR->Render();
 		 }
      }
+     Timer timer;
+     while (msg.message != WM_QUIT)
+     {
+         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+         {
+             TranslateMessage(&msg);
+             DispatchMessage(&msg);
+         }
+         else
+         {
+             float deltaTime = timer.Tick(); // Returns seconds elapsed
+             DirXRR->Update(deltaTime);
+             DirXRR->Render();
+         }
+     }
 
      // cuando ya vayamos a salir debemos liberar los recursos liberados
 	 //para el directx, si hay tarjeta grafica se debe de liberar tambien.
@@ -73,7 +89,7 @@ TerrainClass *DirXRR;
 
      return msg.wParam;
  }
-
+*/
 
  //en este procedimiento tipo callback manejaremos los eventos de windows
  //mouse teclado, joystick, etc.

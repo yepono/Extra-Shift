@@ -30,12 +30,11 @@ LPDIRECTINPUTDEVICE8 m_pKeyboardDevice = NULL;
 LPDIRECTINPUTDEVICE8 m_pMouseDevice = NULL;
 bool cKeyWasDown = false;
 
-void TestAssimp()
+/*void TestAssimp()
 {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile("test.obj", aiProcess_Triangulate);
-    // Even if the file doesn't exist, this compiling and linking means integration works
-}
+}*/
 
 void createMouseDevice(HWND hWnd)
 {
@@ -80,7 +79,7 @@ void createKeyboardDevice(HWND hWnd) {
 
 }
 
-void ProcessInput(HWND hWnd)
+void ProcessInput(HWND hWnd, float deltaTime)
 {
     if (!dxrr)
         return;
@@ -117,36 +116,36 @@ void ProcessInput(HWND hWnd)
     dxrr->camYaw = 0.0f;
     dxrr->camPitch = 0.0f;
 
-    const float movementSpeed = 0.5f;
-    const float keyboardLookSpeed = 0.025f;
+    float movementSpeed = 30.0f;      // units per second
+    const float keyboardLookSpeed = 1.5f;   // radians per second
 
     // movimiento WASD
 
     if (keyboardData[DIK_W] & 0x80)
-        dxrr->moveBackForward += movementSpeed;
+        dxrr->moveBackForward += movementSpeed * deltaTime;
 
     if (keyboardData[DIK_S] & 0x80)
-        dxrr->moveBackForward -= movementSpeed;
+        dxrr->moveBackForward -= movementSpeed * deltaTime;
 
     if (keyboardData[DIK_A] & 0x80)
-        dxrr->moveLeftRight -= movementSpeed;
+        dxrr->moveLeftRight -= movementSpeed * deltaTime;
 
     if (keyboardData[DIK_D] & 0x80)
-        dxrr->moveLeftRight += movementSpeed;
+        dxrr->moveLeftRight += movementSpeed * deltaTime;
 
     // Rotacion de la camara
 
     if (keyboardData[DIK_LEFT] & 0x80)
-        dxrr->camYaw -= keyboardLookSpeed;
+        dxrr->camYaw -= keyboardLookSpeed * deltaTime;
 
     if (keyboardData[DIK_RIGHT] & 0x80)
-        dxrr->camYaw += keyboardLookSpeed;
+        dxrr->camYaw += keyboardLookSpeed * deltaTime;
 
     if (keyboardData[DIK_UP] & 0x80)
-        dxrr->camPitch -= keyboardLookSpeed;
+        dxrr->camPitch -= keyboardLookSpeed * deltaTime;
 
     if (keyboardData[DIK_DOWN] & 0x80)
-        dxrr->camPitch += keyboardLookSpeed;
+        dxrr->camPitch += keyboardLookSpeed * deltaTime;
 
     // Toggle tercera persona con c
 
@@ -155,16 +154,40 @@ void ProcessInput(HWND hWnd)
 
     if (cKeyIsDown && !cKeyWasDown)
     {
+        // playerPosition is the single source of truth for both camera modes,
+        // so toggling only changes how the camera is placed around it.
         dxrr->thirdPerson = !dxrr->thirdPerson;
-
-        // El jugador se posiciona en la camara al cambiar a tp
-        if (dxrr->thirdPerson)
-        {
-            dxrr->playerPosition = dxrr->camara->Position;
-        }
     }
 
     cKeyWasDown = cKeyIsDown;
+
+    // Mostrar u ocultar las cajas de colision (F1)
+
+    static bool f1WasDown = false;
+
+    bool f1IsDown =
+        (keyboardData[DIK_F1] & 0x80) != 0;
+
+    if (f1IsDown && !f1WasDown)
+    {
+        dxrr->mostrarColisiones = !dxrr->mostrarColisiones;
+    }
+
+    f1WasDown = f1IsDown;
+
+    // Mostrar u ocultar las coordenadas del jugador (F2)
+
+    static bool f2WasDown = false;
+
+    bool f2IsDown =
+        (keyboardData[DIK_F2] & 0x80) != 0;
+
+    if (f2IsDown && !f2WasDown)
+    {
+        dxrr->mostrarCoordenadas = !dxrr->mostrarCoordenadas;
+    }
+
+    f2WasDown = f2IsDown;
 
     // Escape
 
@@ -240,22 +263,18 @@ void ProcessInput(HWND hWnd)
             if (fabsf(rightY) < deadZone)
                 rightY = 0.0f;
 
-            const float gamepadMoveSpeed = 0.5f;
-            const float gamepadLookSpeed = 0.035f;
+            const float gamepadMoveSpeed = 30.0f;
+            const float gamepadLookSpeed = 2.1f;
 
             // Left stick controls movement.
-            dxrr->moveLeftRight +=
-                leftX * gamepadMoveSpeed;
+            dxrr->moveLeftRight += leftX * gamepadMoveSpeed * deltaTime;
 
-            dxrr->moveBackForward +=
-                leftY * gamepadMoveSpeed;
+            dxrr->moveBackForward += leftY * gamepadMoveSpeed * deltaTime;
 
             // Right stick controls camera rotation.
-            dxrr->camYaw +=
-                rightX * gamepadLookSpeed;
+            dxrr->camYaw += rightX * gamepadLookSpeed * deltaTime;
 
-            dxrr->camPitch -=
-                rightY * gamepadLookSpeed;
+            dxrr->camPitch -= rightY * gamepadLookSpeed * deltaTime;
 
             // Right shoulder: faster movement.
             if (pad.wButtons &
@@ -281,13 +300,9 @@ void ProcessInput(HWND hWnd)
 
             if (bIsDown && !previousB)
             {
+                // Same as the C key: playerPosition stays put.
                 dxrr->thirdPerson =
                     !dxrr->thirdPerson;
-
-                if (dxrr->thirdPerson)
-                {
-                    dxrr->playerPosition = dxrr->camara->Position;
-                }
             }
 
             previousB = bIsDown;
@@ -374,18 +389,39 @@ int WINAPI WinMain(HINSTANCE hInstance,
         IID_IDirectInput8, (void**)&m_pDirectInput, 0);
     createMouseDevice(hWnd);
     createKeyboardDevice(hWnd);
+
+    LARGE_INTEGER timerFrequency = {};
+    LARGE_INTEGER previousCounter = {};
+    LARGE_INTEGER currentCounter = {};
+
+    QueryPerformanceFrequency(&timerFrequency);
+    QueryPerformanceCounter(&previousCounter);
+
     while(TRUE)
     {
-        if(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+        if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
 
-            if(msg.message == WM_QUIT)
+            if (msg.message == WM_QUIT)
                 break;
         }
 
-        ProcessInput(hWnd);
+        QueryPerformanceCounter(&currentCounter);
+
+        float deltaTime = static_cast<float>(
+            static_cast<double>(currentCounter.QuadPart - previousCounter.QuadPart) /
+            static_cast<double>(timerFrequency.QuadPart));
+
+        previousCounter = currentCounter;
+
+        // Avoid a large movement jump after a pause or debugger break.
+        if (deltaTime > 0.1f)
+            deltaTime = 0.1f;
+
+        ProcessInput(hWnd, deltaTime);
+        dxrr->Update(deltaTime);
         dxrr->Render();
     }
 

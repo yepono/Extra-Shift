@@ -97,7 +97,7 @@ public:
 
 		bool loaded = CargaParametros(
 			L"coast_sand_02_diff_2k.jpg",
-			L"desierto.jpg",
+			L"hm_desierto.png",
 			100.0f
 		);
 
@@ -736,8 +736,20 @@ public:
 		int indiceix = (int)indicefx;
 		int indiceiz = (int)indicefz;
 
+		// Mantener los indices dentro de la malla. Antes, consultar una
+		// posicion fuera de [-250, 250] leia fuera del arreglo.
+		if (indiceix < 0) indiceix = 0;
+		if (indiceiz < 0) indiceiz = 0;
+		if (indiceix > anchoTexTerr - 2) indiceix = anchoTexTerr - 2;
+		if (indiceiz > altoTexTerr - 2) indiceiz = altoTexTerr - 2;
+
 		float fx = indicefx - (float)indiceix;
 		float fz = indicefz - (float)indiceiz;
+
+		if (fx < 0.0f) fx = 0.0f;
+		if (fx > 1.0f) fx = 1.0f;
+		if (fz < 0.0f) fz = 0.0f;
+		if (fz > 1.0f) fz = 1.0f;
 
 		if (fx >= fz)
 		{

@@ -1,0 +1,38 @@
+inicio constructor
+despues de IniciaD3D
+despues de billboards.Inicializar
+despues de paneles.Inicializar
+despues de TerrenoRR
+despues de personajes
+despues de objetos
+despues de refris
+despues de repisas
+despues de edificios
+despues de new AnimatedModel
+despues de alien_anim.Load
+despues de ConfigurarColisiones
+despues de ConfigurarPaneles
+fin constructor
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+captura: cam=-40.00,13.00,50.00 paneles=2
+inicio constructor
+despues de IniciaD3D
+despues de billboards.Inicializar
+despues de paneles.Inicializar
+despues de TerrenoRR
+despues de personajes
+despues de objetos
+despues de refris
+despues de repisas
+despues de edificios
+despues de new AnimatedModel
+despues de alien_anim.Load
+despues de ConfigurarColisiones
+despues de ConfigurarPaneles
+fin constructor
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+tp=1 cam=-40.00,13.00,50.00 player=-40.00,11.33,51.00 paneles=2
+captura: cam=-40.00,13.00,50.00 paneles=2

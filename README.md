@@ -230,6 +230,19 @@ Reglas de ejecución:
 | `v1dx11rr/main.cpp` | `WinMain` viejo, comentado y con includes inexistentes (`Terrain.h`, `Timer.h`). **No está en el `.vcxproj` ni se compila.** | Muerto |
 | `v1dx11rr/TextureLoader.h/.cpp` | Vacíos (el `.cpp` pesa 0 bytes). | Muerto |
 
+#### Colisiones
+
+| Archivo | Rol |
+|---|---|
+| `v1dx11rr/Colision.h` | `CajaColision` y `SistemaColision`: cajas AABB, resolución de movimiento con deslizamiento y consulta de altura de piso. |
+| `v1dx11rr/ColisionDebug.h` | `DepuradorColision`: dibuja las cajas como alambre con un shader HLSL embebido (tecla `F1`). |
+
+#### Depuración en pantalla
+
+| Archivo | Rol |
+|---|---|
+| `v1dx11rr/TextoPantalla.h` | `TextoPantalla`: texto 2D superpuesto (coordenadas del jugador) con fuente 5x7 embebida y shader HLSL propio (tecla `F2`). |
+
 #### Terreno
 
 | Archivo | Rol |
@@ -248,13 +261,14 @@ Reglas de ejecución:
 | `v1dx11rr/Modelo.fx` | Shader con textura difusa, especular y luz direccional. |
 | `v1dx11rr/Assets/Modelos/...` | `.obj`, `.jpeg`, `.png` de personajes y objetos. |
 
-#### Cielo y billboards
+#### Cielo, imágenes y billboards
 
 | Archivo | Rol |
 |---|---|
 | `v1dx11rr/SkyDome.h` | Esfera procedural con textura; sigue a la cámara y se dibuja sin depth. |
 | `v1dx11rr/SkyDome.fx` | Shader del domo. |
-| `v1dx11rr/Billboard.h` / `Billboard.hlsl` | Billboard con normal map y frames. **Desactivado** (comentado en `DXRR`). |
+| `v1dx11rr/PanelRR.h` | `PanelRR`: imágenes **fijas** en el mundo (carteles, productos en estanterías). HLSL embebido, un quad por imagen. |
+| `v1dx11rr/Billboard.h` / `Billboard.hlsl` | `BillboardRR`: imágenes que **siempre miran a la cámara**. HLSL en archivo, sin normal map ni frames. |
 
 #### Animación FBX
 
@@ -285,7 +299,9 @@ WinMain
   │    ├─ new TerrenoRR(500,500)    → heightmap, malla, shaders, texturas
   │    ├─ new SkyDome(32,32,100)
   │    ├─ new ModeloRR(...) × N     → OBJ estáticos
-  │    └─ new AnimatedModel(-40,51) → alien.fbx + clips Idle/Walk/Pickup
+  │    ├─ new AnimatedModel(-40,51) → alien.fbx + clips Idle/Walk/Pickup
+  │    ├─ ConfigurarColisiones()    → cajas AABB del escenario
+  │    └─ ConfigurarPaneles()/ConfigurarBillboards() → imágenes
   ├─ new GamePadRR(1) y DirectInput (ratón + teclado)
   └─ bucle:
        PeekMessage → ProcessInput(dt) → dxrr->Update(dt) → dxrr->Render()
@@ -295,7 +311,7 @@ Cada frame:
 
 1. `ProcessInput` limpia los deltas (`moveBackForward`, `moveLeftRight`, `camYaw`, `camPitch`) y los vuelve a acumular desde teclado, ratón y mando, multiplicando por `deltaTime`.
 2. `DXRR::Update` aplica esos deltas a la cámara/jugador, ajusta la altura del jugador al terreno y elige la animación (`Walk` si hay movimiento, `Idle` si no).
-3. `DXRR::Render` limpia buffers, actualiza la vista, dibuja **cielo → terreno → modelos → modelo animado** y hace `Present(1,0)` (vsync).
+3. `DXRR::Render` limpia buffers, actualiza la vista, dibuja **cielo → terreno → modelos → modelo animado → paneles y billboards → cajas de `F1` → texto de `F2`** y hace `Present(1,0)` (vsync).
 
 El `deltaTime` se calcula con `QueryPerformanceCounter` y se limita a `0.1 s` para evitar saltos tras un *breakpoint*.
 
@@ -318,6 +334,7 @@ El proyecto mezcla dos convenciones y **no son intercambiables**:
 |---|---|---|
 | `Shader.fx`, `Modelo.fx`, `SkyDome.fx` | `matrix` (column_major por defecto) + `mul(vector, matrix)` | **Transponer en CPU** (`D3DXMatrixTranspose`). `DXRR::Render` genera `gpuView` y `gpuProjection` ya transpuestas. |
 | HLSL embebido en `AnimatedModel.cpp` | `row_major float4x4` | **Sin transponer**. Se le pasa `&camara->View._11` directamente. |
+| `Billboard.hlsl` y HLSL embebido de `PanelRR.h` | `row_major float4x4` + `mul(mul(vector, mundo), vistaProyeccion)` | **Sin transponer**. Usan `camara->View` y `camara->Projection` tal cual. |
 
 Si se transpone dos veces (o ninguna) el síntoma es geometría invisible, deformada o “detrás” de la cámara. Las normales se transforman con la matriz de mundo sin inversa-traspuesta; funciona porque todas las escalas son uniformes.
 
@@ -354,7 +371,8 @@ Métodos:
 - `Update(dt)`: aplica input, sincroniza altura del jugador, mueve el alien a `playerPosition` y cambia entre `Walk`/`Idle`.
 - `TurnOn/OffAlphaBlending`, `TurnOn/OffDepth`: crean el estado **cada llamada** (deuda técnica, ver 6.13).
 - `UpdateCameraFromInput()`: delega en `Camara` según `thirdPerson` y limpia los deltas.
-- `isPointInsideSphere`, `billCargaFuego`: helpers heredados; `billCargaFuego` prepara UVs de 32 frames para el billboard y hoy no se llama.
+- `isPointInsideSphere`, `billCargaFuego`: helpers heredados; `billCargaFuego` preparaba UVs de 32 frames para el billboard viejo y hoy no se llama.
+- `ConfigurarBillboards()` / `ConfigurarPaneles()`: registran las imágenes de `BillboardRR` (siempre de frente) y de `PanelRR` (fijas), respectivamente. Ver 6.17.
 
 ### 6.7 Cámara y controles
 
@@ -368,6 +386,8 @@ Métodos:
 | Flechas `↑` `↓` | Rotar cámara en vertical (1.5 rad/s). |
 | Ratón | Mirar (sensibilidad `0.0025` rad/píxel). El cursor se oculta y se recentra. |
 | `C` | Alternar primera/tercera persona. |
+| `F1` | Mostrar/ocultar todas las cajas de colisión (alambre, sin depth). |
+| `F2` | Mostrar/ocultar las coordenadas X/Z/Y del jugador en pantalla. |
 | `Esc` | Salir. |
 | Stick izquierdo | Mover (30 u/s). |
 | Stick derecho | Rotar cámara (2.1 rad/s). |
@@ -378,9 +398,10 @@ Zona muerta del mando: `0.19`. Al cambiar a tercera persona, el jugador se coloc
 
 #### `Camara`
 
-- `UpdateCamera(move, strafe, yaw, pitch)`: primera persona. Limita `pitch` a ±89°, calcula `Forward`/`Right` solo con *yaw* y reconstruye `View` con `LookAtLH`.
+- `UpdateFirstPerson(playerPosition, move, strafe, yaw, pitch, eyeHeight)`: primera persona. Limita `pitch` a ±89°, calcula `Forward`/`Right` solo con *yaw* y coloca la cámara en los ojos del jugador (`playerPosition.y + eyeHeight`).
 - `UpdateThirdPerson(playerPosition, move, strafe, yaw, pitch, distance, height)`: mueve al jugador, limita `pitch` a `[-30°, +75°]` y coloca la cámara detrás a `distance = 8`, mirando a `altura = 1.5`.
-- No hay colisión de cámara: puede atravesar el terreno o los modelos.
+- Ambos modos mueven `playerPosition` a través de `MoverJugador`, que usa `SistemaColision` cuando se llamó a `ConfigurarColision`. La altura del jugador (`playerPosition.y`) la corrige `DXRR::Update` con `AlturaSueloJugador` y `DesplazarVertical`.
+- No hay colisión de la cámara en sí: en tercera persona puede atravesar muros u objetos; solo el volumen del jugador colisiona.
 
 ### 6.8 Terreno (`TerrenoRR`)
 
@@ -518,17 +539,17 @@ Y llamar `m_XACT3.DoWork()` una vez por frame. El `XACTINDEX cueIndex;` de `DXRR
 | 1 | `main.cpp` no se compila y referencia headers inexistentes | `main.cpp` | Confusión | Borrarlo |
 | 2 | `TextureLoader.*` vacíos | `TextureLoader.*` | Ninguno | Borrarlos del proyecto |
 | 3 | Rutas absolutas `C:\Users\...` y libs **x86** en `Debug|x64` | `v1dx11rr.vcxproj` (PropertyGroups Debug) | El enlace x64 falla en otra PC | Usar `$(SolutionDir)packages\...\release\lib\$(Platform)` (Win32→x86) |
-| 4 | `Superficie()` no valida límites del terreno | `TerrenoRR.h` | Crash si la cámara sale de `[-250,250]` | *Clamp* del índice o devolver `0` |
+| 4 | ~~`Superficie()` no valida límites del terreno~~ | `TerrenoRR.h` | *Resuelto*: los índices se recortan a la malla | — |
 | 5 | Heightmap asume RGBA de 4 bytes e ignora `RowPitch` | `TerrenoRR.h::LoadHeightData` | Alturas incorrectas con otras imágenes | Usar `subResrc.RowPitch` y bytes por píxel del formato |
-| 6 | `delete` en vez de `delete[]` para arreglos | `SkyDome.h` (`vertices`, `indices`), `Billboard.h` | Comportamiento indefinido | `delete[]` |
+| 6 | `delete` en vez de `delete[]` para arreglos | `SkyDome.h` (`vertices`, `indices`) | Comportamiento indefinido | `delete[]` |
 | 7 | Blend/depth states creados **cada frame** y sin liberar | `DXRR.h::TurnOn/Off*` | Fuga de recursos y CPU | Crearlos una vez en `IniciaD3D` |
-| 8 | Vertex buffer recreado cada frame | `Billboard.h::Draw` | Fuga fuerte | Crear una vez y actualizar |
+| 8 | ~~Vertex buffer recreado cada frame~~ | `Billboard.h` | *Resuelto*: un buffer dinámico compartido por todos los billboards | — |
 | 9 | Proyección con `ancho`/`alto` sin inicializar | `ModeloRR.h` | Basura (no se usa) | Eliminar código muerto |
 | 10 | `viewMatrix *= rotationMat` acumulativo | `ModeloRR.h::Draw` | Confuso (no se sube a GPU) | Eliminar |
 | 11 | La `y` del terreno se consulta con coordenadas distintas a la posición del modelo | `DXRR.h::Render` (refri, repisas, bar, hotel, oxxo, mostrador) | Objetos flotando o hundidos | Usar `getPosX()/getPosZ()` o mover el modelo a esas coords |
 | 12 | `~DXRR` no libera `terreno`, `skydome` ni los `ModeloRR` | `DXRR.h` | Fugas al salir | `delete` de cada uno |
 | 13 | `Terminate()` sin `Initialize()` | `DXRR.h` | `CoUninitialize` desbalanceado | Inicializar audio o quitar la llamada |
-| 14 | Billboard desactivado e incompleto | `Billboard.h`, `DXRR.h` | No usable | Terminarlo antes de activarlo |
+| 14 | ~~Billboard desactivado e incompleto~~ | `Billboard.h`, `PanelRR.h` | *Resuelto*: `BillboardRR` (mira a la cámara) y `PanelRR` (fijo) activos | — |
 | 15 | `SkinnedModel.fx` no se usa | `SkinnedModel.fx` | Confusión | Borrarlo o migrar el HLSL embebido ahí |
 | 16 | Sin *culling* ni instancing; modelos se dibujan siempre | `DXRR::Render` | Rendimiento | *Frustum culling*, buffers compartidos |
 | 17 | `Map()` sin comprobar `HRESULT` y sin `Unmap` si falla | `TerrenoRR.h::LoadHeightData` | Crash difícil de diagnosticar | Validar y liberar en error |
@@ -554,6 +575,12 @@ Y llamar `m_XACT3.DoWork()` una vez por frame. El `XACTINDEX cueIndex;` de `DXRR
 
 **Agregar un botón del mando:** usar `pad.wButtons & XINPUT_GAMEPAD_X` y el patrón `previousX` para detectar flanco (como hace `B`).
 
+**Agregar una caja de colisión:** registrarla en `DXRR::ConfigurarColisiones()` con `AgregarCajaModelo(modelo, y, rot, eje, escala, "nombre")` para que la caja derive de la malla, o directamente con `colisiones.AgregarCaja(centro, semiejes, solido, soporta, "nombre")`. Las medidas y la transformación deben coincidir con las del `Draw` correspondiente. Para un piso interior, usar `colisiones.AgregarPiso(...)`. Pulsar `F1` para ver las cajas en alambre. Si solo se quiere visualizar la caja sin que colisione, usar `AgregarCajaModeloDepuracion(...)` (se dibuja en cian).
+
+**Agregar un piso dentro de un edificio:** `colisiones.AgregarPiso(centroX, centroZ, alturaPiso, ancho, fondo, 0.5f, "piso_bar");`. El piso se registra como `solido = false` y `soporta = true`, así que eleva los pies sin bloquear la entrada. Ver la sección 6.16.
+
+**Agregar una imagen al escenario:** para una imagen fija usar `paneles.AgregarConAspecto(L"Assets/Billboards/mi.png", x, y, z, ancho, giro)` en `DXRR::ConfigurarPaneles()`; para una que siga a la cámara, `billboards.AgregarConAspecto(textura, x, z, y, ancho)` en `ConfigurarBillboards()`. Con `y = terreno->Superficie(x, z)` queda apoyada en el suelo. Ver 6.17.
+
 ### 6.15 Lista de verificación antes de compilar
 
 - [ ] Las 8 librerías de Assimp existen (`external/assimp-build-*/lib/...` y `.../contrib/zlib/...`).
@@ -565,15 +592,149 @@ Y llamar `m_XACT3.DoWork()` una vez por frame. El `XACTINDEX cueIndex;` de `DXRR
 - [ ] Si se agregó un `.cpp`, está incluido en `v1dx11rr.vcxproj` (Visual Studio no lo agrega solo).
 - [ ] El nuevo modelo usa `/` en las rutas y la extensión correcta de textura.
 
-### 6.16 Glosario
+### 6.16 Sistema de colisiones
+
+Implementado en `v1dx11rr/Colision.h` (header-only) y `v1dx11rr/ColisionDebug.h`. Todas las cajas son **AABB** alineadas a los ejes; se definen por su **centro** y sus **semiejes** (la mitad del tamaño en X, Y y Z).
+
+Una caja tiene dos banderas independientes:
+
+| Bandera | Significado |
+|---|---|
+| `solido` | Bloquea el movimiento horizontal (muros, muebles, personajes). |
+| `soporta` | Se puede caminar encima; su cara superior cuenta como suelo (pisos, plataformas). |
+
+Una misma caja puede ser sólida y soportable (por ejemplo una caja o un *crate*). Un piso interior debe ser **solo soportable**: `solido = false`, `soporta = true`.
+
+#### API de `SistemaColision`
+
+| Método | Uso |
+|---|---|
+| `AgregarCaja(centro, mitad, solido, soporta, nombre)` | Caja genérica. Devuelve el índice. |
+| `AgregarCajaMinMax(minimo, maximo, solido, soporta, nombre)` | Igual, pero con las esquinas mínima/máxima. |
+| `AgregarPiso(x, z, alturaPiso, ancho, fondo, grosor, nombre)` | Piso horizontal. La cara superior queda exactamente en `alturaPiso`; se registra como `solido = false`, `soporta = true`. |
+| `AgregarCajaPersonaje(x, z, ySuelo, radio, altura, solido, nombre)` | Huella cuadrada para un personaje. Devuelve el índice para moverla. |
+| `ActualizarCaja(indice, centro)` / `ActivarCaja(indice, activa)` | Mueve o habilita/deshabilita una caja existente. |
+| `Mover(posicion, desplazamiento, radio, altura)` | Resuelve el movimiento del jugador. |
+| `AlturaSuelo(x, z, yActual, alturaTerreno)` | Devuelve el suelo efectivo en `(x, z)`. |
+| `pasoMaximo` | Escalón máximo que se sube sin saltar (por defecto `1.0`). |
+
+#### Movimiento y altura
+
+- `Mover` aplica el desplazamiento **por ejes separados** (primero X, luego Z), lo que permite deslizarse a lo largo de un muro en vez de quedar bloqueado.
+- El desplazamiento se divide en pasos de `0.25` unidades (máximo 64) para que el jugador no atraviese cajas delgadas al moverse rápido.
+- Si el jugador ya empieza dentro de una caja sólida, se le permite moverse para que pueda salir.
+- `AlturaSuelo` parte de la altura del terreno y toma el mayor techo de las cajas `soporta` que estén debajo de los pies (o como máximo `pasoMaximo` por encima). El resultado se asigna a `playerPosition.y` en `DXRR::Update`.
+- Las cajas sólidas más bajas que `pos.y + pasoMaximo` se ignoran como obstáculo: son escalones o banquetas.
+
+#### Cajas de modelos y personajes
+
+- `ModeloRR::AgregarCajaColision(sistema, ypos, rot, angle, scale, solido, soporta, nombre)` encierra toda la malla usando sus límites locales y la **misma** `MatrizMundo` que `Draw`. Por eso la caja coincide con lo que se ve aunque el OBJ esté lejos de su origen local.
+- `ModeloRR::AgregarCajaLocal(...)` registra una caja definida en coordenadas locales del modelo. Sirve para muros y pisos interiores de edificios: se colocan en el espacio del modelo y se transforman al mundo.
+- `AnimatedModel::AgregarCajaColision(...)` hace lo equivalente para personajes animados, incluyendo `footOffset` y las rotaciones de corrección.
+- `DXRR::AgregarCajaModelo(...)` es el atajo que usa `ConfigurarColisiones()` para los modelos del escenario.
+
+#### Integración en `DXRR`
+
+| Elemento | Rol |
+|---|---|
+| `colisiones` | Instancia de `SistemaColision`. |
+| `ConfigurarColisiones()` | Registra personajes y objetos. Los parámetros deben coincidir con los del `Draw`. |
+| `AgregarCajaModelo(...)` | Deriva una caja sólida de la malla de un `ModeloRR`. |
+| `AlturaSueloJugador(x, z, y)` | Combina `TerrenoRR::Superficie` con `AlturaSuelo`. |
+| `radioJugador` / `alturaJugador` | Volumen del jugador, calculado a partir de la malla del alien con límites (`0.3..2.0` de radio, `1..8` de altura). |
+| `mostrarColisiones` + `F1` | Dibuja las cajas en alambre con `DepuradorColision`, sin *depth* para que se vean dentro de edificios. |
+| `colisionesDepuracion` | Cajas que solo existen para `F1` (oxxo y volumen del jugador); no bloquean ni soportan. |
+| `textoPantalla` + `mostrarCoordenadas` + `F2` | Superpone las coordenadas X/Z/Y de `playerPosition` para colocar cajas. |
+
+#### Depuración visual (`F1`)
+
+`F1` dibuja dos sistemas en una sola pasada:
+
+| Color | Significado |
+|---|---|
+| Rojo | Caja sólida (`solido = true`, `soporta = false`). |
+| Verde | Solo piso (`solido = false`, `soporta = true`). |
+| Amarillo | Sólida y soportable. |
+| Cian | Solo depuración (`colisionesDepuracion`): no participa en la simulación. |
+
+Se dibuja con el *depth test* desactivado, así que las cajas se ven a través de la malla de los modelos. Las cajas de `colisionesDepuracion` se usan para:
+
+- Los edificios que no deben bloquearse con una sola caja envolvente (`oxxo`). Así se puede comprobar si la caja de la malla coincide con el edificio sin bloquear la entrada.
+- El volumen real del jugador (`radioJugador` × `alturaJugador`), que sigue su posición cada frame en `Update`. No es una caja sólida: sirve para ver exactamente con qué volumen se resuelve `Mover`.
+
+Para agregar una caja de un modelo solo a la depuración, usar `AgregarCajaModeloDepuracion(...)`. Para que además colisione, usar `AgregarCajaModelo(...)`.
+
+#### Coordenadas en pantalla (`F2`)
+
+`F2` muestra u oculta un recuadro en la esquina superior izquierda con la posición del jugador:
+
+```
+JUGADOR
+X: 12.34   Z: -56.78
+Y: 2.10
+```
+
+- `X` y `Z` son las coordenadas de `playerPosition` en el mundo: sirven para colocar el centro de una caja (`AgregarCaja(centro, ...)`) o para comprobar los límites de una caja local.
+- `Y` es la altura actual del jugador (`playerPosition.y`), útil para decidir el centro vertical de la caja y el `terrainY` de un piso.
+- El recuadro se dibuja por defecto (`mostrarCoordenadas = true`) y se alterna con `F2`.
+
+Se implementa en `v1dx11rr/TextoPantalla.h` (`TextoPantalla`), igual que `ColisionDebug.h`: fuente 5x7 embebida, un *vertex buffer* dinámico y un shader HLSL propio, sin DirectXTK ni texturas externas. Se dibuja en píxeles desde la esquina superior izquierda (por defecto en `(12, 12)`, escala `2`) al final de `DXRR::Render`, después de las cajas de `F1` y antes de `Present`. Para moverlo o cambiar el tamaño, ajustar los parámetros `x`, `y` y `escala` de `textoPantalla.Dibujar(...)`.
+
+
+#### ¿Un piso dentro de un edificio choca con algo?
+
+No, siempre que se registre como piso soportable con `AgregarPiso` (`solido = false`, `soporta = true`):
+
+- Su cara superior solo eleva los pies; no bloquea el paso, así que la entrada y el interior siguen siendo transitables.
+- La altura final es `max(altura del terreno, techo del piso)`. El terreno no se suma ni se duplica: si el piso está más alto, manda el piso; si el jugador sale del área del piso, vuelve al terreno.
+- Un piso **sólido** sí daría problemas: bloquearía los costados y la entrada, y el jugador no podría ponerse encima porque su volumen chocaría con la caja.
+
+Si los pies del personaje se ven hundidos o flotando respecto al piso, el problema no es la caja sino el pivote del modelo. En ese caso ajustar `footOffset` en `AnimatedModel::Draw`: la traslación es `terrainY - footOffset * scale`, así que un valor negativo sube al personaje y uno positivo lo baja.
+
+Advertencia: no registrar los edificios grandes (`bar`, `hotel`, `oxxo`) con una sola caja envolvente. Esa caja taparía la entrada y todo el interior. Conviene agregar muros y pisos por separado, en lo posible con `AgregarCajaLocal` o `AgregarPiso`. Si solo se quiere comprobar la caja de la malla, usar `AgregarCajaModeloDepuracion` para verla con `F1` sin que colisione.
+
+### 6.17 Imágenes en el escenario (paneles y billboards)
+
+Hay dos clases que dibujan un quad con una imagen y transparencia. Comparten la misma idea (textura + *alpha blending* + *depth test*), pero se orientan distinto:
+
+| Clase | Archivo | Orientación | Cuándo usarla |
+|---|---|---|---|
+| `PanelRR` | `v1dx11rr/PanelRR.h` | **Fija** en el mundo; gira `giroGrados` alrededor de Y | Carteles, fotos y productos pegados a una pared o estantería |
+| `BillboardRR` | `v1dx11rr/Billboard.h` + `Billboard.hlsl` | **Siempre de frente** a la cámara (solo *yaw*, sin inclinarse) | Productos sueltos, fuego, iconos flotantes |
+
+Se registran en el constructor de `DXRR`, en `ConfigurarPaneles()` y `ConfigurarBillboards()` (después de `ConfigurarColisiones()`):
+
+```cpp
+// Panel fijo:  (textura, x, y, z, ancho, giro)
+paneles.AgregarConAspecto(L"Assets/Billboards/cokita.png", x, y, z, 3.0f, 180.0f);
+
+// Billboard:   (textura, x, z, y, ancho)
+billboards.AgregarConAspecto(L"Assets/Billboards/boing.png", x, z, y, 2.0f);
+```
+
+> Ojo con el orden: en `PanelRR` la `y` va **antes** que la `z`; en `BillboardRR` es `x, z, y`.
+
+- **Origen = centro del borde inferior.** `(x, z)` es la posición horizontal e `y` la altura del borde de abajo. Para apoyar la imagen en el suelo: `terreno->Superficie(x, z)`.
+- `Agregar(...)` acepta `ancho` y `alto` explícitos. `AgregarConAspecto(...)` calcula el alto con `D3DX11GetImageInfoFromFile` para no deformar la imagen; conviene usarla con las franjas anchas de `Assets/Billboards` (`cokita.png` 736×186, `oreo.png` 736×78).
+- Los paneles son de **una sola cara** (`D3D11_CULL_BACK`): `0` grados mira hacia **+Z** y `180` hacia **-Z**. Si un panel no se ve, sumarle `180` al giro. Los billboards son de doble cara y se ven desde cualquier lado.
+- Ambos se dibujan **después** de los modelos opacos y **antes** de las cajas de `F1` y del texto de `F2`, con blending alfa, *depth test* y *depth write*, y descartando los píxeles con alfa menor que `0.01`. Al terminar restauran los estados por defecto.
+- `PanelRR` lleva el HLSL embebido (no necesita archivo externo). `BillboardRR` compila `Billboard.hlsl` desde el directorio de trabajo, así que ese archivo debe estar en `v1dx11rr\`.
+- Costo: una textura por imagen y **un draw call por imagen**; el *vertex buffer* dinámico, los shaders y los estados se comparten entre todas.
+- Las imágenes **no tienen colisión**. Si deben bloquear, registrar una caja en `ConfigurarColisiones()` con las mismas medidas y posición.
+
+### 6.18 Glosario
 
 | Término | Significado en este proyecto |
 |---|---|
 | **Heightmap** | Imagen cuyos valores de brillo definen la altura del terreno. |
 | **Skydome** | Esfera grande con textura que simula el cielo. |
-| **Billboard** | Quad que siempre mira a la cámara (hoy desactivado). |
+| **Billboard** | Quad que siempre mira a la cámara (`BillboardRR`). |
+| **Panel** | Quad fijo en el mundo que no gira con la cámara (`PanelRR`). |
 | **Skinning** | Deformación de la malla por pesos de huesos. |
 | **Clip / canal** | Animación y conjunto de keys de un nodo del esqueleto. |
 | **Cue** | Sonido individual definido en el proyecto XACT. |
 | **Superficie** | Altura `y` del terreno en un `(x, z)` dado. |
+| **AABB** | Caja alineada a los ejes; se define por centro y semiejes. |
+| **Caja sólida** | Caja que bloquea el movimiento horizontal (`solido = true`). |
+| **Caja soportable** | Caja sobre la que se puede caminar (`soporta = true`); un piso interior es solo soportable. |
 | **Const buffer** | Buffer de constantes que recibe el shader (matrices, cámara, etc.). |
