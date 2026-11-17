@@ -471,7 +471,9 @@ void AnimatedModel::CreateShadersAndInputLayout()
     m_device->CreateSamplerState(&samplerDescription, &m_sampler);
 }
 
-bool AnimatedModel::Load(const std::string& filepath)
+bool AnimatedModel::Load(
+    const std::string& filepath,
+    const std::string& diffuseTextureOverride)
 {
     if (!m_device || !m_context || filepath.empty())
         return false;
@@ -485,7 +487,7 @@ bool AnimatedModel::Load(const std::string& filepath)
     if (m_importer->subMeshes.empty())
         return false;
 
-    // Limites locales de la malla (pose de bind) para las colisiones.
+    // Limites locales de la malla (pose de bind) para las coliciones.
     m_tieneLimites = false;
     {
         float minimo[3] = { 1.0e30f, 1.0e30f, 1.0e30f };
@@ -619,19 +621,25 @@ bool AnimatedModel::Load(const std::string& filepath)
 
         destination.indexCount = static_cast<UINT>(source.indices.size());
 
+        const std::string& diffusePath =
+            diffuseTextureOverride.empty()
+            ? source.diffuseTexturePath
+            : diffuseTextureOverride;
+
         bool textureLoaded = false;
 
-        if (!source.diffuseTexturePath.empty() &&
-            source.diffuseTexturePath[0] != '*')
+        if (!diffusePath.empty() && diffusePath[0] != '*')
         {
-            std::string texturePath = source.diffuseTexturePath;
+            std::string texturePath = diffusePath;
 
             const bool isAbsolute =
                 texturePath[0] == '/' ||
                 texturePath[0] == '\\' ||
                 (texturePath.size() > 1 && texturePath[1] == ':');
 
-            if (!isAbsolute)
+            // Material paths are relative to the FBX. An explicit override
+            // is relative to the application's working directory.
+            if (diffuseTextureOverride.empty() && !isAbsolute)
                 texturePath = m_importer->directory + texturePath;
 
             result = D3DX11CreateShaderResourceViewFromFileA(
@@ -643,6 +651,13 @@ bool AnimatedModel::Load(const std::string& filepath)
                 nullptr);
 
             textureLoaded = SUCCEEDED(result);
+
+            if (!textureLoaded)
+            {
+                OutputDebugStringA(
+                    ("AnimatedModel: failed to load texture: " +
+                     texturePath + "\n").c_str());
+            }
         }
 
         if (!textureLoaded &&
@@ -671,9 +686,9 @@ bool AnimatedModel::LoadAnimationFile(
     return m_importer->LoadAnimationFile(filepath, clipName);
 }
 
-void AnimatedModel::PlayAnimation(const std::string& name)
+void AnimatedModel::PlayAnimation(const std::string& name, bool loop)
 {
-    if (name == m_currentAnimation)
+    if (name == m_currentAnimation && loop == m_loopAnimation)
         return;
 
     const auto animation = m_importer->animations.find(name);
@@ -686,6 +701,8 @@ void AnimatedModel::PlayAnimation(const std::string& name)
     }
 
     m_currentAnimation = name;
+    m_loopAnimation = loop;
+    m_animationFinished = false;
     m_animationTime = 0.0f;
     Update(0.0f);
 }
@@ -710,8 +727,20 @@ void AnimatedModel::Update(float deltaTime)
 
         if (clip->duration > 0.0)
         {
-            m_animationTime = static_cast<float>(
-                std::fmod(m_animationTime, clip->duration));
+            if (m_loopAnimation)
+            {
+                m_animationTime = static_cast<float>(
+                    std::fmod(m_animationTime, clip->duration));
+            }
+            else if (m_animationTime >= clip->duration)
+            {
+                m_animationTime = static_cast<float>(clip->duration);
+                m_animationFinished = true;
+            }
+        }
+        else if (!m_loopAnimation)
+        {
+            m_animationFinished = true;
         }
     }
 

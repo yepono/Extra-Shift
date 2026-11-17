@@ -33,12 +33,15 @@ public:
 
     ~AnimatedModel();
 
-    bool Load(const std::string& filepath);
+    bool Load(
+        const std::string& filepath,
+        const std::string& diffuseTextureOverride = {});
     bool LoadAnimationFile(
         const std::string& filepath,
         const std::string& clipName);
-    void PlayAnimation(const std::string& name);
+    void PlayAnimation(const std::string& name, bool loop = true);
     void Update(float deltaTime);
+    bool IsAnimationFinished() const { return m_animationFinished; }
 
     float GetPosX() const { return m_posX; }
     float GetPosZ() const { return m_posZ; }
@@ -137,6 +140,8 @@ private:
     float m_globalInverseRoot[16] = {};
     std::string m_currentAnimation;
     float m_animationTime = 0.0f;
+    bool m_loopAnimation = true;
+    bool m_animationFinished = false;
 
     void CreateShadersAndInputLayout();
     void TraverseHierarchy(

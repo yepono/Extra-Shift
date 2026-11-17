@@ -110,6 +110,9 @@ public:
 	// FBX alien
 	AnimatedModel* alien_anim;
 	bool alienAnimLoaded = false;
+	bool alienPickupLoaded = false;
+	bool pickupRequested = false;
+	bool pickupPlaying = false;
 
 
 	// Relacionado a la camara
@@ -254,24 +257,37 @@ public:
 
 		// prueba de fbx
 		alien_anim = new AnimatedModel(d3dDevice, d3dContext, -40.0f, 51.0f);
-		alienAnimLoaded =
-			alien_anim->Load("Assets/Modelos/Persona/alien2.fbx");
+		alienAnimLoaded = alien_anim->Load(
+			"Assets/Modelos/Persona/alien2.fbx",
+			"Assets/Modelos/Persona/alien.jpeg");
+
+		bool alienIdleLoaded = false;
+		bool alienWalkLoaded = false;
 
 		if (alienAnimLoaded)
 		{
-			alien_anim->LoadAnimationFile(
+			alienIdleLoaded = alien_anim->LoadAnimationFile(
 				"Assets/Modelos/Persona/alien_idle.fbx",
 				"Idle");
 
-			alien_anim->LoadAnimationFile(
+			alienWalkLoaded = alien_anim->LoadAnimationFile(
 				"Assets/Modelos/Persona/alien_walk.fbx",
 				"Walk");
 
-			alien_anim->LoadAnimationFile(
+			alienPickupLoaded = alien_anim->LoadAnimationFile(
 				"Assets/Modelos/Persona/alien_pickup.fbx",
 				"Pickup");
 
-			alien_anim->PlayAnimation("Idle");
+			if (!alienIdleLoaded || !alienWalkLoaded || !alienPickupLoaded)
+			{
+				OutputDebugStringA(
+					"DXRR: one or more alien animation files failed to load.\n");
+			}
+
+			if (alienIdleLoaded)
+				alien_anim->PlayAnimation("Idle");
+			else if (alienWalkLoaded)
+				alien_anim->PlayAnimation("Walk");
 		}
 
 		playerPosition = D3DXVECTOR3(
@@ -686,19 +702,42 @@ public:
 				playerPosition.z));
 
 		// Keep the character model in sync with the player in both modes.
+		bool alienPickupLoaded = false;
+		bool pickupRequested = false;
+		bool pickupPlaying = false;
+
 		if (alienAnimLoaded && alien_anim != nullptr)
 		{
 			alien_anim->SetPosition(
 				playerPosition.x,
 				playerPosition.z);
 
-			const char* desiredAnimation = isMoving ? "Walk" : "Idle";
-			alien_anim->PlayAnimation(desiredAnimation);
+			if (pickupRequested)
+			{
+				pickupRequested = false;
 
-			alien_anim->Update(deltaTime);
+				if (alienPickupLoaded)
+				{
+					pickupPlaying = true;
+					alien_anim->PlayAnimation("Pickup", false);
+				}
+			}
+
+			if (pickupPlaying)
+			{
+				alien_anim->Update(deltaTime);
+
+				if (alien_anim->IsAnimationFinished())
+					pickupPlaying = false;
+			}
+			else
+			{
+				alien_anim->PlayAnimation(isMoving ? "Walk" : "Idle");
+				alien_anim->Update(deltaTime);
+			}
 		}
 	}
-	// Altura del suelo en una posicion: el terreno o, si hay un piso
+	// Altura del suelo en una posiciones: el terreno o, si hay un piso
 	// registrado mas alto, la cara superior de ese piso.
 	float AlturaSueloJugador(float x, float z, float alturaActual)
 	{
