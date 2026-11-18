@@ -235,7 +235,11 @@ float4 PSMain(PSInput entrada) : SV_Target
 		const char* texto,
 		float x = 12.0f,
 		float y = 12.0f,
-		float escala = 2.0f)
+		float escala = 2.0f,
+		bool conFondo = true,
+		float rojo = 1.0f,
+		float verde = 1.0f,
+		float azul = 1.0f)
 	{
 		if (!m_listo || m_context == nullptr || texto == nullptr)
 			return;
@@ -283,20 +287,23 @@ float4 PSMain(PSInput entrada) : SV_Target
 
 		const float margen = 8.0f;
 		const float fondoColor[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
-		const float textoColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		const float textoColor[4] = { rojo, verde, azul, 1.0f };
 
 		std::vector<VerticeTexto> vertices;
 		vertices.reserve(strlen(texto) * 210 + 6);
 
-		AgregarRect(
-			vertices,
-			x - margen,
-			y - margen,
-			x + anchoMaximo + margen,
-			y + lineas * altoLinea + margen,
-			viewport.Width,
-			viewport.Height,
-			fondoColor);
+		if (conFondo)
+		{
+			AgregarRect(
+				vertices,
+				x - margen,
+				y - margen,
+				x + anchoMaximo + margen,
+				y + lineas * altoLinea + margen,
+				viewport.Width,
+				viewport.Height,
+				fondoColor);
+		}
 
 		float cursorX = x;
 		float cursorY = y;
@@ -430,6 +437,10 @@ private:
 			{ '-', { 0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000 } },
 			{ '.', { 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100 } },
 			{ ':', { 0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000 } },
+			{ '!', { 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00000, 0b00100 } },
+			{ '?', { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100 } },
+			{ ',', { 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000 } },
+			{ '\'', { 0b00100, 0b00100, 0b01000, 0b00000, 0b00000, 0b00000, 0b00000 } },
 
 			{ '0', { 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 } },
 			{ '1', { 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 } },

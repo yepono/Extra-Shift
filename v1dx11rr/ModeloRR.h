@@ -110,6 +110,12 @@ public:
 		return this->posZ;
 	}
 
+	void SetPosicion(float x, float z)
+	{
+		posX = x;
+		posZ = z;
+	}
+
 	bool TieneLimites() const
 	{
 		return tieneLimites;

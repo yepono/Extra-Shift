@@ -267,6 +267,30 @@ public:
 		return m_entradas.size();
 	}
 
+	void Mover(size_t indice, float x, float z, float y)
+	{
+		if (indice >= m_entradas.size())
+			return;
+
+		m_entradas[indice].x = x;
+		m_entradas[indice].z = z;
+		m_entradas[indice].y = y;
+	}
+
+	void Vaciar()
+	{
+		for (size_t i = 0; i < m_entradas.size(); ++i)
+		{
+			if (m_entradas[i].textura != nullptr)
+			{
+				m_entradas[i].textura->Release();
+				m_entradas[i].textura = nullptr;
+			}
+		}
+
+		m_entradas.clear();
+	}
+
 private:
 	struct Entrada
 	{

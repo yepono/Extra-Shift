@@ -3,9 +3,17 @@
 
 #include <d3d11.h>
 #include <d3dx11.h>
+#include <d3dx11tex.h>
 #include <DxErr.h>
 #include <D3Dcompiler.h>
 #include <d3dx10math.h>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cwctype>
+#include <fstream>
+#include <string>
+#include <vector>
 
 struct SkyComponent
 {
@@ -35,6 +43,8 @@ private:
 
 	ID3D11ShaderResourceView* textura;
 	ID3D11SamplerState* texSampler;
+	bool texturaHDR;   // true: equirectangular .hdr, false: jpg/png con UV del domo
+	float exposicion;  // multiplicador antes del tone mapping (solo HDR)
 
 	ID3D11Buffer* matrixBufferCB;
 	MatrixType* matrices;
@@ -55,6 +65,17 @@ public:
 		this->radio = radio;
 		indices = NULL;
 		vertices = NULL;
+		solidColorVS = nullptr;
+		solidColorPS = nullptr;
+		inputLayout = nullptr;
+		vertexBuffer = nullptr;
+		indexBuffer = nullptr;
+		textura = nullptr;
+		texSampler = nullptr;
+		matrixBufferCB = nullptr;
+		matrices = nullptr;
+		texturaHDR = false;
+		exposicion = 1.0f;
 		this->d3dDevice = d3dDevice;
 		this->d3dContext = d3dContext;
 		LoadContent(diffuseTex);
@@ -193,14 +214,14 @@ public:
 			MessageBox(0, L"Error", L"Error al crear vertex buffer", MB_OK);
 			return false;
 		}
-		delete vertices;
+        delete[] vertices;
+		vertices = nullptr;
 
 		creaIndices();
 
-		d3dResult = D3DX11CreateShaderResourceViewFromFile((*d3dDevice), diffuseTex, 0, 0, &textura, 0);
-
-		if (FAILED(d3dResult))
+		if (!CargarTextura(diffuseTex, &textura, texturaHDR))
 		{
+			MessageBox(0, L"No se pudo cargar la textura del skydome", L"Error", MB_OK);
 			return false;
 		}
 
@@ -257,6 +278,8 @@ public:
 			indexBuffer->Release();
 		if (matrixBufferCB)
 			matrixBufferCB->Release();
+		delete matrices;
+		matrices = nullptr;
 
 		texSampler = 0;
 		textura = 0;
@@ -272,13 +295,15 @@ public:
 
 	void Update(D3DXMATRIX view, D3DXMATRIX projection)
 	{
+		if (matrices == nullptr)
+			return;
 		matrices->viewMatrix = view;
 		matrices->projMatrix = projection;
 	}
 
 	void Render(D3DXVECTOR3 trans)
 	{
-		if (d3dContext == 0)
+		if (d3dContext == 0 || matrices == nullptr)
 			return;
 
 		unsigned int stride = sizeof(SkyComponent);
@@ -295,17 +320,205 @@ public:
 		(*d3dContext)->PSSetSamplers(0, 1, &texSampler);
 
 		D3DXMATRIX worldMat;
-		D3DXMatrixTranslation(&worldMat, trans.x, trans.y - 50.0f, trans.z);
+		const float bajadaDomo = 50.0f; // centro del domo bajo la camara
+		D3DXMatrixTranslation(&worldMat, trans.x, trans.y - bajadaDomo, trans.z);
 		D3DXMatrixTranspose(&worldMat, &worldMat);
 		matrices->worldMatrix = worldMat;
+		matrices->valores = D3DXVECTOR4(texturaHDR ? 1.0f : 0.0f, exposicion, bajadaDomo, 0.0f);
 
 		(*d3dContext)->UpdateSubresource(matrixBufferCB, 0, 0, matrices, sizeof(MatrixType), 0);
 		(*d3dContext)->VSSetConstantBuffers(0, 1, &matrixBufferCB);
+		(*d3dContext)->PSSetConstantBuffers(0, 1, &matrixBufferCB);
 
 		(*d3dContext)->DrawIndexed(cantIndex, 0, 0);
 	}
 
+	// Cambia la imagen del cielo sin reconstruir la malla.
+	// Se usa al terminar el turno para pasar de dia a noche.
+	bool ReemplazarTextura(const WCHAR* ruta)
+	{
+		if (d3dDevice == nullptr || *d3dDevice == nullptr || ruta == nullptr)
+			return false;
+
+		ID3D11ShaderResourceView* nueva = nullptr;
+		bool nuevaEsHDR = false;
+		if (!CargarTextura(ruta, &nueva, nuevaEsHDR))
+			return false;
+
+		if (textura)
+			textura->Release();
+
+		textura = nueva;
+		texturaHDR = nuevaEsHDR;
+		return true;
+	}
+
+	// Brillo del cielo HDR antes del tone mapping (1 = sin cambio).
+	void SetExposicion(float valor)
+	{
+		exposicion = valor;
+	}
+
 private:
+	// Carga .hdr con el lector RGBE propio; cualquier otro formato con D3DX11.
+	bool CargarTextura(const WCHAR* ruta, ID3D11ShaderResourceView** srv, bool& esHDR)
+	{
+		*srv = nullptr;
+		esHDR = EsArchivoHDR(ruta);
+
+		if (!esHDR)
+		{
+			HRESULT r = D3DX11CreateShaderResourceViewFromFile(*d3dDevice, ruta, 0, 0, srv, 0);
+			return SUCCEEDED(r) && *srv != nullptr;
+		}
+
+		int ancho = 0, alto = 0;
+		std::vector<float> rgba;
+		if (!LeerHDR(ruta, ancho, alto, rgba))
+			return false;
+
+		// float16 es filtrable en cualquier feature level (float32 RGBA no siempre)
+		std::vector<D3DXFLOAT16> mitad(rgba.size());
+		D3DXFloat32To16Array(mitad.data(), rgba.data(), (UINT)rgba.size());
+
+		D3D11_TEXTURE2D_DESC desc;
+		ZeroMemory(&desc, sizeof(desc));
+		desc.Width = ancho;
+		desc.Height = alto;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_IMMUTABLE;
+		desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+		D3D11_SUBRESOURCE_DATA datos;
+		ZeroMemory(&datos, sizeof(datos));
+		datos.pSysMem = mitad.data();
+		datos.SysMemPitch = ancho * 4 * sizeof(D3DXFLOAT16);
+
+		ID3D11Texture2D* tex = nullptr;
+		if (FAILED((*d3dDevice)->CreateTexture2D(&desc, &datos, &tex)))
+			return false;
+
+		HRESULT r = (*d3dDevice)->CreateShaderResourceView(tex, nullptr, srv);
+		tex->Release();
+		return SUCCEEDED(r);
+	}
+
+	static bool EsArchivoHDR(const WCHAR* ruta)
+	{
+		std::wstring s(ruta);
+		size_t punto = s.find_last_of(L'.');
+		if (punto == std::wstring::npos)
+			return false;
+		std::wstring ext = s.substr(punto + 1);
+		for (size_t i = 0; i < ext.size(); ++i)
+			ext[i] = (wchar_t)towlower(ext[i]);
+		return ext == L"hdr";
+	}
+
+	// Lector Radiance RGBE (.hdr): encabezado, resolucion "-Y alto +X ancho",
+	// scanlines con RLE moderno o sin comprimir. Devuelve RGBA float lineal.
+	static bool LeerHDR(const WCHAR* ruta, int& ancho, int& alto, std::vector<float>& rgba)
+	{
+		std::ifstream f(ruta, std::ios::binary);
+		if (!f)
+			return false;
+
+		std::string linea;
+		if (!std::getline(f, linea) || linea.compare(0, 2, "#?") != 0)
+			return false;
+
+		while (std::getline(f, linea))
+		{
+			if (!linea.empty() && linea.back() == '\r')
+				linea.pop_back();
+			if (linea.empty())
+				break; // fin del encabezado
+			if (linea.compare(0, 7, "FORMAT=") == 0 && linea != "FORMAT=32-bit_rle_rgbe")
+				return false; // XYZE u otro formato no soportado
+		}
+
+		if (!std::getline(f, linea))
+			return false;
+		if (sscanf_s(linea.c_str(), "-Y %d +X %d", &alto, &ancho) != 2 || ancho <= 0 || alto <= 0)
+			return false; // solo la orientacion estandar
+
+		std::vector<uint8_t> scan((size_t)ancho * 4);
+		rgba.assign((size_t)ancho * alto * 4, 0.0f);
+
+		for (int y = 0; y < alto; ++y)
+		{
+			uint8_t cab[4];
+			if (!f.read((char*)cab, 4))
+				return false;
+
+			const bool rleNuevo = ancho >= 8 && ancho < 0x8000 &&
+				cab[0] == 2 && cab[1] == 2 && (cab[2] & 0x80) == 0;
+
+			if (rleNuevo)
+			{
+				if (((cab[2] << 8) | cab[3]) != ancho)
+					return false;
+
+				// Cada canal (R, G, B, E) viene comprimido por separado
+				for (int c = 0; c < 4; ++c)
+				{
+					int x = 0;
+					while (x < ancho)
+					{
+						int cuenta = f.get();
+						if (cuenta == EOF)
+							return false;
+
+						if (cuenta > 128)
+						{
+							cuenta -= 128;
+							int valor = f.get();
+							if (valor == EOF || cuenta > ancho - x)
+								return false;
+							while (cuenta-- > 0)
+								scan[(size_t)(x++) * 4 + c] = (uint8_t)valor;
+						}
+						else
+						{
+							if (cuenta == 0 || cuenta > ancho - x)
+								return false;
+							while (cuenta-- > 0)
+							{
+								int valor = f.get();
+								if (valor == EOF)
+									return false;
+								scan[(size_t)(x++) * 4 + c] = (uint8_t)valor;
+							}
+						}
+					}
+				}
+			}
+			else
+			{
+				// Scanline sin comprimir: los 4 bytes leidos son el primer pixel
+				memcpy(scan.data(), cab, 4);
+				if (ancho > 1 && !f.read((char*)scan.data() + 4, (std::streamsize)(ancho - 1) * 4))
+					return false;
+			}
+
+			float* fila = &rgba[(size_t)y * ancho * 4];
+			for (int x = 0; x < ancho; ++x)
+			{
+				const uint8_t* p = &scan[(size_t)x * 4];
+				const float escala = p[3] ? (float)ldexp(1.0, p[3] - (128 + 8)) : 0.0f;
+				fila[x * 4 + 0] = p[0] * escala;
+				fila[x * 4 + 1] = p[1] * escala;
+				fila[x * 4 + 2] = p[2] * escala;
+				fila[x * 4 + 3] = 1.0f;
+			}
+		}
+
+		return true;
+	}
+
 	void creaIndices()
 	{
 		cantIndex = (slices - 1)*(stacks - 1) * 6;
@@ -346,7 +559,8 @@ private:
 		{
 			return;
 		}
-		delete indices;
+     delete[] indices;
+		indices = nullptr;
 	}
 };
 #endif

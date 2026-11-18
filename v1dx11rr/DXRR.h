@@ -201,7 +201,7 @@ public:
 			Ancho,
 			Alto);
 		terreno = new TerrenoRR(500, 500, d3dDevice, d3dContext);
-		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"Skydome.jpg");
+		skydome = new SkyDome(32, 32, 100.0f, &d3dDevice, &d3dContext, L"Assets/hdr_day.hdr");
 
 		// Personajes del escenario
 		chavo3 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chavo3.obj", L"Assets/Modelos/Persona/chavo3.jpeg", L"Assets/Modelos/Persona/chavo3_specular_map.png", -90, 30);
