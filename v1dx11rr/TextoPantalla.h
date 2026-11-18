@@ -22,6 +22,9 @@
 
 class TextoPantalla
 {
+private:
+	struct VerticeTexto;
+
 public:
 	bool Inicializar(ID3D11Device* device, ID3D11DeviceContext* context)
 	{
@@ -258,32 +261,18 @@ float4 PSMain(PSInput entrada) : SV_Target
 			return;
 		}
 
-		const float anchoLetra = 6.0f * escala;
-		const float altoLinea = 9.0f * escala;
+		const float anchoLetra = AnchoLetra(escala);
+		const float altoLinea = AltoLinea(escala);
 
 		// Mide el texto para pintar un fondo que lo haga legible.
-		float anchoMaximo = 0.0f;
-		float anchoActual = 0.0f;
 		int lineas = 1;
-
 		for (const char* p = texto; *p != '\0'; ++p)
 		{
 			if (*p == '\n')
-			{
-				if (anchoActual > anchoMaximo)
-					anchoMaximo = anchoActual;
-
-				anchoActual = 0.0f;
 				++lineas;
-			}
-			else
-			{
-				anchoActual += anchoLetra;
-			}
 		}
 
-		if (anchoActual > anchoMaximo)
-			anchoMaximo = anchoActual;
+		const float anchoMaximo = MedirAncho(texto, escala);
 
 		const float margen = 8.0f;
 		const float fondoColor[4] = { 0.0f, 0.0f, 0.0f, 0.65f };
@@ -308,20 +297,24 @@ float4 PSMain(PSInput entrada) : SV_Target
 		float cursorX = x;
 		float cursorY = y;
 
-		for (const char* p = texto; *p != '\0'; ++p)
+		for (const char* p = texto; *p != '\0';)
 		{
 			if (*p == '\n')
 			{
 				cursorX = x;
 				cursorY += altoLinea;
+				++p;
 				continue;
 			}
 
+			const int codigo = SiguienteCodigo(p);
+
+			// Las 2 primeras filas de cada renglon quedan para los acentos.
 			DibujarGlifo(
 				vertices,
-				*p,
+				codigo,
 				cursorX,
-				cursorY,
+				cursorY + 2.0f * escala,
 				escala,
 				viewport.Width,
 				viewport.Height,
@@ -330,6 +323,137 @@ float4 PSMain(PSInput entrada) : SV_Target
 			cursorX += anchoLetra;
 		}
 
+		EnviarVertices(vertices);
+	}
+
+	// Rectangulo de color solido en pixeles de pantalla (para oscurecer
+	// la pantalla de game over, por ejemplo).
+	void DibujarRect(float x0, float y0, float x1, float y1, const float color[4])
+	{
+		if (!m_listo || m_context == nullptr)
+			return;
+
+		UINT totalViewports = 1;
+		D3D11_VIEWPORT viewport;
+		m_context->RSGetViewports(&totalViewports, &viewport);
+
+		if (totalViewports == 0 || viewport.Width <= 0.0f || viewport.Height <= 0.0f)
+			return;
+
+		std::vector<VerticeTexto> vertices;
+		AgregarRect(vertices, x0, y0, x1, y1, viewport.Width, viewport.Height, color);
+		EnviarVertices(vertices);
+	}
+
+	static float AnchoLetra(float escala) { return 6.0f * escala; }
+	static float AltoLinea(float escala) { return 11.0f * escala; }
+
+	// Ancho en pixeles del renglon mas largo (cuenta letras, no bytes).
+	static float MedirAncho(const char* texto, float escala)
+	{
+		if (texto == nullptr)
+			return 0.0f;
+
+		float anchoMaximo = 0.0f;
+		float anchoActual = 0.0f;
+
+		for (const char* p = texto; *p != '\0';)
+		{
+			if (*p == '\n')
+			{
+				if (anchoActual > anchoMaximo)
+					anchoMaximo = anchoActual;
+
+				anchoActual = 0.0f;
+				++p;
+				continue;
+			}
+
+			SiguienteCodigo(p);
+			anchoActual += AnchoLetra(escala);
+		}
+
+		return anchoActual > anchoMaximo ? anchoActual : anchoMaximo;
+	}
+
+	// Parte el texto en renglones que quepan en `anchoMaximo` pixeles,
+	// cortando en los espacios. Devuelve cuantos renglones quedaron.
+	static int Envolver(
+		const char* texto,
+		float anchoMaximo,
+		float escala,
+		char* salida,
+		size_t tamSalida)
+	{
+		if (salida == nullptr || tamSalida == 0)
+			return 0;
+
+		salida[0] = '\0';
+		if (texto == nullptr)
+			return 0;
+
+		int maxLetras = (int)(anchoMaximo / AnchoLetra(escala));
+		if (maxLetras < 4)
+			maxLetras = 4;
+
+		size_t escrito = 0;
+		int lineas = 1;
+		int letrasEnLinea = 0;
+		const char* p = texto;
+
+		while (*p != '\0')
+		{
+			if (*p == '\n')
+			{
+				if (escrito + 1 >= tamSalida) break;
+				salida[escrito++] = '\n';
+				letrasEnLinea = 0;
+				++lineas;
+				++p;
+				continue;
+			}
+
+			// Mide la siguiente palabra (hasta espacio o salto).
+			const char* fin = p;
+			int letras = 0;
+			while (*fin != '\0' && *fin != ' ' && *fin != '\n')
+			{
+				SiguienteCodigo(fin);
+				++letras;
+			}
+
+			if (letrasEnLinea > 0 && letrasEnLinea + 1 + letras > maxLetras)
+			{
+				if (escrito + 1 >= tamSalida) break;
+				salida[escrito++] = '\n';
+				letrasEnLinea = 0;
+				++lineas;
+			}
+			else if (letrasEnLinea > 0)
+			{
+				if (escrito + 1 >= tamSalida) break;
+				salida[escrito++] = ' ';
+				++letrasEnLinea;
+			}
+
+			const size_t bytes = (size_t)(fin - p);
+			if (escrito + bytes >= tamSalida) break;
+			memcpy(salida + escrito, p, bytes);
+			escrito += bytes;
+			letrasEnLinea += letras;
+
+			p = fin;
+			while (*p == ' ')
+				++p;
+		}
+
+		salida[escrito] = '\0';
+		return lineas;
+	}
+
+private:
+	void EnviarVertices(std::vector<VerticeTexto>& vertices)
+	{
 		if (vertices.empty())
 			return;
 
@@ -380,9 +504,75 @@ private:
 
 	struct Glifo
 	{
-		char caracter;
+		int caracter;
 		unsigned char filas[7];
 	};
+
+	enum Acento { SinAcento, Agudo, Tilde, Dieresis };
+
+	// Lee un caracter del texto y avanza el puntero. Acepta UTF-8
+	// (como se guardan los .h) y tambien Latin-1 / Windows-1252 de un
+	// solo byte, por si el compilador convierte los literales.
+	// Devuelve el codigo Latin-1 (0..255) o '?' si no se puede mostrar.
+	static int SiguienteCodigo(const char*& p)
+	{
+		const unsigned char b0 = (unsigned char)p[0];
+
+		if (b0 < 0x80)
+		{
+			++p;
+			return b0;
+		}
+
+		const unsigned char b1 = (unsigned char)p[1];
+
+		if ((b0 & 0xE0) == 0xC0 && (b1 & 0xC0) == 0x80)
+		{
+			p += 2;
+			const int codigo = ((b0 & 0x1F) << 6) | (b1 & 0x3F);
+			return codigo <= 0xFF ? codigo : '?';
+		}
+
+		if ((b0 & 0xF0) == 0xE0 && (b1 & 0xC0) == 0x80 && ((unsigned char)p[2] & 0xC0) == 0x80)
+		{
+			p += 3;
+			return '?';
+		}
+
+		++p;
+		return b0;
+	}
+
+	// La fuente solo tiene mayusculas: convierte minusculas (con acento
+	// o sin el) a su mayuscula Latin-1.
+	static int Mayuscula(int c)
+	{
+		if (c >= 'a' && c <= 'z')
+			return c - 32;
+
+		if (c >= 0xE0 && c <= 0xFE && c != 0xF7)
+			return c - 32;
+
+		return c;
+	}
+
+	// Letra base y acento de las vocales acentuadas, la Ñ y la Ü.
+	static int SepararAcento(int c, Acento& acento)
+	{
+		acento = SinAcento;
+
+		switch (c)
+		{
+		case 0xC1: acento = Agudo; return 'A';
+		case 0xC9: acento = Agudo; return 'E';
+		case 0xCD: acento = Agudo; return 'I';
+		case 0xD3: acento = Agudo; return 'O';
+		case 0xDA: acento = Agudo; return 'U';
+		case 0xD1: acento = Tilde; return 'N';
+		case 0xDC: acento = Dieresis; return 'U';
+		default: return c;
+		}
+	}
 
 	static const size_t MaxVertices = 32768;
 
@@ -441,6 +631,16 @@ private:
 			{ '?', { 0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b00000, 0b00100 } },
 			{ ',', { 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000 } },
 			{ '\'', { 0b00100, 0b00100, 0b01000, 0b00000, 0b00000, 0b00000, 0b00000 } },
+			{ '"', { 0b01010, 0b01010, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000 } },
+			{ ';', { 0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b01000 } },
+			{ '(', { 0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010 } },
+			{ ')', { 0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000 } },
+			{ '/', { 0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000 } },
+			{ '+', { 0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000 } },
+			{ '$', { 0b00100, 0b01111, 0b10100, 0b01110, 0b00101, 0b11110, 0b00100 } },
+			{ '%', { 0b11001, 0b11010, 0b00010, 0b00100, 0b01000, 0b01011, 0b10011 } },
+			{ 0xBF, { 0b00100, 0b00000, 0b00100, 0b01000, 0b10000, 0b10001, 0b01110 } }, // ¿
+			{ 0xA1, { 0b00100, 0b00000, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100 } }, // ¡
 
 			{ '0', { 0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110 } },
 			{ '1', { 0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110 } },
@@ -485,7 +685,7 @@ private:
 		return glifos;
 	}
 
-	static const Glifo* BuscarGlifo(char c)
+	static const Glifo* BuscarGlifo(int c)
 	{
 		int total = 0;
 		const Glifo* glifos = TablaGlifos(total);
@@ -501,7 +701,7 @@ private:
 
 	static void DibujarGlifo(
 		std::vector<VerticeTexto>& vertices,
-		char c,
+		int codigo,
 		float x,
 		float y,
 		float escala,
@@ -509,10 +709,45 @@ private:
 		float altoPantalla,
 		const float color[4])
 	{
-		const Glifo* glifo = BuscarGlifo(c);
+		Acento acento = SinAcento;
+		const int base = SepararAcento(Mayuscula(codigo), acento);
+		const Glifo* glifo = BuscarGlifo(base);
 
 		if (glifo == nullptr)
 			return;
+
+		// Acento en las 2 filas de arriba de la letra.
+		if (acento != SinAcento)
+		{
+			static const unsigned char acentos[4][2] =
+			{
+				{ 0b00000, 0b00000 },
+				{ 0b00010, 0b00100 }, // agudo
+				{ 0b01101, 0b10010 }, // tilde
+				{ 0b00000, 0b01010 }, // dieresis
+			};
+
+			for (int fila = 0; fila < 2; ++fila)
+			{
+				const unsigned char bits = acentos[acento][fila];
+
+				for (int columna = 0; columna < 5; ++columna)
+				{
+					if ((bits & (1 << (4 - columna))) == 0)
+						continue;
+
+					AgregarRect(
+						vertices,
+						x + columna * escala,
+						y + (fila - 2) * escala,
+						x + (columna + 1) * escala,
+						y + (fila - 1) * escala,
+						anchoPantalla,
+						altoPantalla,
+						color);
+				}
+			}
+		}
 
 		for (int fila = 0; fila < 7; ++fila)
 		{

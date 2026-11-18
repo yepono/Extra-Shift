@@ -5,22 +5,47 @@
 //
 // Explorando -> (el jugador entra) puerta bloqueada
 //   -> cliente en camino -> cliente esperando en la caja
-//   -> dialogo de 5 lineas en primera persona
+//   -> dialogo de 5 lineas en primera persona (opciones barajadas)
 //   -> caen 2 o 3 productos; hay que devolverlos estante por estante
 //   -> el siguiente cliente no avanza mientras quede algo en el piso
 //   -> al tercer cliente: noche, la puerta se abre, abordar la nave con 600 pesos
 //
-// La vida baja de golpe: respuesta sospechosa, respuesta alienigena,
-// o 20 segundos sin atender a un cliente que ya esta en la caja.
+// La vida baja de golpe: respuesta rara, respuesta alienigena,
+// o 20 segundos sin atender (cliente en la caja o piso sin limpiar).
+//
+// Los textos estan en UTF-8 con acentos; TextoPantalla los decodifica.
 
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <windows.h>
 
 class TurnoExtraShift
 {
 public:
+	// ---- Ajustes de juego -------------------------------------------------
+	static constexpr float VidaMaxima = 100.0f;
+	static constexpr float CuraHumana = 5.0f;    // opcion humana
+	static constexpr float DanoRaro = 15.0f;     // opcion rara / sospechosa
+	static constexpr float DanoAlien = 35.0f;    // opcion alienigena
+	static constexpr float DanoEspera = 20.0f;   // cada 20 s sin atender
+	static constexpr float LimiteEspera = 20.0f;
+
+	static constexpr float PagoHumano = 45.0f;   // por linea bien contestada
+	static constexpr float PagoRaro = 20.0f;     // el cliente compra a medias
+	static constexpr float MetaPesos = 600.0f;   // pieza averiada de la nave
+
+	// ---- Posiciones en el mundo (ajustar con F2) -------------------------
+	static constexpr float MostradorX = -53.0f;  // centro del mostrador
+	static constexpr float MostradorZ = 30.0f;
+	static constexpr float PuestoX = -56.5f;     // el jugador, detras del mostrador
+	static constexpr float PuestoZ = 30.0f;
+	static constexpr float ClienteX = -49.0f;    // el cliente, frente al mostrador
+	static constexpr float ClienteZ = 30.0f;
+	static constexpr float NaveX = -35.0f;
+	static constexpr float NaveZ = 62.0f;
+
 	TurnoExtraShift()
 	{
 		srand((unsigned)time(nullptr));
@@ -32,82 +57,84 @@ public:
 		fase = Fase::Explorando;
 		cliente = 0;
 		linea = 0;
-		opcionMarcada = 0;
+		seleccion = -1;
+		respondida = false;
 		pausa = 0.0f;
 		timer = 0.0f;
 		espera = 0.0f;
-		vida = 100.0f;
+		vida = VidaMaxima;
 		pesos = 0.0f;
+		ticket = 0.0f;
+		clienteMolesto = false;
 		llevando = -1;
-		generacion = 0;
+		generacion++;
 		pedirReposicion = false;
 		pedirRecogida = false;
 
 		for (int i = 0; i < MaxObjetos; ++i)
 			objetos[i].activo = false;
 
+		for (int i = 0; i < 3; ++i)
+		{
+			orden[i] = i;
+			opcionVisible[i][0] = '\0';
+		}
+
 		lineaVisible[0] = '\0';
 		aviso[0] = '\0';
 		estado[0] = '\0';
-
-		for (int i = 0; i < 3; ++i)
-			opcionVisible[i][0] = '\0';
+		motivo[0] = '\0';
+		RefrescarEstado();
 	}
 
+	// opcion: 0 = ninguna, 1..3 = tecla pulsada este frame.
+	// confirmar: ENTER / E este frame (acepta la opcion marcada).
 	void Actualizar(
 		float dt,
 		float jugadorX,
 		float jugadorZ,
 		bool interactuar,
-		int opcion)
+		int opcion,
+		bool confirmar)
 	{
 		if (dt < 0.0f)
 			dt = 0.0f;
 
 		for (int i = 0; i < MaxObjetos; ++i)
 		{
-			if (!objetos[i].activo || objetos[i].enMano)
+			if (!objetos[i].activo)
 				continue;
 
-			objetos[i].caida += dt / 0.45f;
-			if (objetos[i].caida > 1.0f)
-				objetos[i].caida = 1.0f;
-		}
-
-		for (int i = 0; i < MaxObjetos; ++i)
-		{
-			if (!objetos[i].activo || !objetos[i].enMano)
-				continue;
-
-			objetos[i].x = jugadorX;
-			objetos[i].z = jugadorZ;
+			if (objetos[i].enMano)
+			{
+				objetos[i].x = jugadorX;
+				objetos[i].z = jugadorZ;
+			}
+			else
+			{
+				objetos[i].caida += dt / 0.45f;
+				if (objetos[i].caida > 1.0f)
+					objetos[i].caida = 1.0f;
+			}
 		}
 
 		switch (fase)
 		{
 		case Fase::Explorando:
-			sprintf_s(
-				aviso,
-				"ENTRA AL OXXO PARA EMPEZAR EL TURNO. LAS PUERTAS SE CERRARAN.");
+			sprintf_s(aviso, "Entra al Oxxo para empezar el turno. Las puertas se cerrarán.");
 
 			if (DentroDelOxxo(jugadorX, jugadorZ))
 			{
 				fase = Fase::ClienteEnCamino;
 				cliente = 0;
 				timer = 0.0f;
-				sprintf_s(
-					aviso,
-					"EMPIEZA EL TURNO. LAS PUERTAS QUEDAN BLOQUEADAS.");
+				sprintf_s(aviso, "¡Empieza el turno! Las puertas quedan bloqueadas.");
 			}
 			break;
 
 		case Fase::ClienteEnCamino:
 			timer += dt;
-			sprintf_s(
-				aviso,
-				"%s SE ACERCA. %s",
-				Guion()[cliente].nombre,
-				Guion()[cliente].contexto);
+			sprintf_s(aviso, "%s se acerca. %s", Guion()[cliente].nombre, Guion()[cliente].contexto);
 
 			if (timer >= 2.2f)
 			{
@@ -117,57 +144,45 @@ public:
 			break;
 
 		case Fase::ClienteEsperando:
-			espera += dt;
+			if (!ContarEspera(dt))
+				break;
 
-			while (espera >= 20.0f)
-			{
-				espera -= 20.0f;
-				Danar(20.0f);
-				sprintf_s(
-					aviso,
-					"EL CLIENTE ESPERO MAS DE 20 SEGUNDOS. LA VIDA BAJA DE GOLPE.");
-
-				if (vida <= 0.0f)
-				{
-					Morir();
-					RefrescarEstado();
-					return;
-				}
-			}
-
-			if (interactuar && Distancia(jugadorX, jugadorZ, CajaX, CajaZ) <= RadioCaja)
+			if (interactuar && Distancia(jugadorX, jugadorZ, MostradorX, MostradorZ) <= RadioCaja)
 			{
 				EntrarDialogo();
 			}
-			else if (vida > 0.0f)
+			else
 			{
-				int segundos = (int)(20.0f - espera);
-				if (segundos < 0)
-					segundos = 0;
-
 				sprintf_s(
 					aviso,
-					"%s YA ESTA EN LA CAJA. ACERCATE Y PULSA E. QUEDAN %d S.",
+					"%s está en la caja. Ve al mostrador y pulsa E. Quedan %d s.",
 					Guion()[cliente].nombre,
-					segundos);
+					SegundosRestantes());
 			}
 			break;
 
 		case Fase::Dialogo:
-			if (pausa > 0.0f)
+			if (respondida)
 			{
 				pausa -= dt;
 				if (pausa <= 0.0f)
 					AvanzarLinea();
 			}
-			else if (opcion >= 1 && opcion <= 3)
+			else
 			{
-				Elegir(opcion - 1);
+				if (opcion >= 1 && opcion <= 3)
+					seleccion = opcion - 1;
+
+				if (confirmar && seleccion >= 0)
+					Responder(seleccion);
 			}
 			break;
 
 		case Fase::Limpieza:
 		{
+			if (!ContarEspera(dt))
+				break;
+
 			bool evento = false;
 			if (interactuar)
 				evento = IntentarLimpieza(jugadorX, jugadorZ);
@@ -177,7 +192,8 @@ public:
 				cliente++;
 				fase = Fase::ClienteEnCamino;
 				timer = 0.0f;
-				sprintf_s(aviso, "EL PISO ESTA LIMPIO. LLEGA EL SIGUIENTE CLIENTE.");
+				espera = 0.0f;
+				sprintf_s(aviso, "El piso está limpio. Llega el siguiente cliente.");
 				break;
 			}
 
@@ -188,17 +204,19 @@ public:
 					const Estante& estante = Estantes()[objetos[llevando].estante];
 					sprintf_s(
 						aviso,
-						"LLEVAS %s. DEVUELVELO AL ESTANTE X %.0f  Z %.0f Y PULSA E.",
+						"Llevas %s. Devuélvelo a su estante (X %.0f, Z %.0f) y pulsa E. Quedan %d s.",
 						estante.nombre,
 						estante.x,
-						estante.z);
+						estante.z,
+						SegundosRestantes());
 				}
 				else
 				{
 					sprintf_s(
 						aviso,
-						"HAY %d PRODUCTOS EN EL PISO. RECOGELOS CON E. EL SIGUIENTE CLIENTE ESPERA.",
-						ObjetosActivos());
+						"Hay %d productos en el piso. Recógelos con E; el cliente espera. Quedan %d s.",
+						ObjetosActivos(),
+						SegundosRestantes());
 				}
 			}
 			break;
@@ -209,78 +227,50 @@ public:
 			{
 				if (interactuar)
 				{
-					if (pesos >= 600.0f)
+					if (pesos >= MetaPesos)
 					{
 						fase = Fase::Victoria;
-						sprintf_s(
-							aviso,
-							"ABORDASTE LA NAVE Y COMPRASTE LA PIEZA. GANASTE EL TURNO.");
+						sprintf_s(aviso, "Abordaste la nave y compraste la pieza.");
 					}
 					else
 					{
-						sprintf_s(
-							aviso,
-							"TE FALTAN PESOS PARA LA PIEZA AVERIADA. LLEVAS %.0f DE 600.",
-							pesos);
+						Perder("No juntaste los 600 pesos para la pieza averiada. Te quedaste varado en la Tierra.");
 					}
 				}
 				else
 				{
-					sprintf_s(
-						aviso,
-						"ESTAS JUNTO A TU NAVE. PULSA E PARA ABORDARLA.");
+					sprintf_s(aviso, "Estás junto a tu nave. Pulsa E para abordarla.");
 				}
 			}
 			else
 			{
-				sprintf_s(
-					aviso,
-					"YA ES DE NOCHE. SAL DEL OXXO Y ABORDA TU NAVE, FRENTE A LA PUERTA.");
+				sprintf_s(aviso, "Ya es de noche. Sal del Oxxo y aborda tu nave, frente a la puerta.");
 			}
 			break;
 
 		case Fase::Victoria:
-			sprintf_s(
-				aviso,
-				"JUNTASTE LOS 600 PESOS. LA PIEZA ES TUYA. FIN DEL TURNO.");
-			break;
-
 		case Fase::Derrota:
-			sprintf_s(
-				aviso,
-				"TE QUEDASTE SIN VIDA. EL TURNO SE ARRUINO.");
 			break;
 		}
 
 		RefrescarEstado();
 	}
 
+	// ---- Consultas para DXRR ---------------------------------------------
 	bool PuertaBloqueada() const
 	{
 		return fase != Fase::Explorando &&
 			fase != Fase::Noche &&
-			fase != Fase::Victoria;
+			fase != Fase::Victoria &&
+			fase != Fase::Derrota;
 	}
 
-	bool ForzarPrimeraPersona() const
-	{
-		return fase == Fase::Dialogo;
-	}
-
-	bool BloquearMovimiento() const
-	{
-		return fase == Fase::Dialogo;
-	}
-
-	bool EsNoche() const
-	{
-		return fase == Fase::Noche || fase == Fase::Victoria;
-	}
-
-	bool EnDialogo() const
-	{
-		return fase == Fase::Dialogo;
-	}
+	bool ForzarPrimeraPersona() const { return fase == Fase::Dialogo; }
+	bool BloquearMovimiento() const { return fase == Fase::Dialogo || JuegoTerminado(); }
+	bool EsNoche() const { return fase == Fase::Noche || fase == Fase::Victoria; }
+	bool EnDialogo() const { return fase == Fase::Dialogo; }
+	bool JuegoTerminado() const { return fase == Fase::Victoria || fase == Fase::Derrota; }
+	bool Gano() const { return fase == Fase::Victoria; }
 
 	bool ClienteVisibleEnCaja() const
 	{
@@ -291,16 +281,25 @@ public:
 
 	int IndiceCliente() const
 	{
-		if (cliente < 0)
-			return 0;
-		if (cliente > 2)
-			return 2;
+		if (cliente < 0) return 0;
+		if (cliente > 2) return 2;
 		return cliente;
 	}
 
-	float Vida() const
+	float Vida() const { return vida; }
+	float Pesos() const { return pesos; }
+	float Ticket() const { return ticket; }
+
+	// Mira desde el puesto hacia el cliente (yaw de la camara).
+	static float YawHaciaCliente()
 	{
-		return vida;
+		return atan2f(ClienteX - PuestoX, ClienteZ - PuestoZ);
+	}
+
+	// Mira desde el cliente hacia el puesto (yaw del modelo del cliente).
+	static float YawHaciaPuesto()
+	{
+		return atan2f(PuestoX - ClienteX, PuestoZ - ClienteZ);
 	}
 
 	bool TomarReposicion(float& x, float& z)
@@ -323,10 +322,9 @@ public:
 		return true;
 	}
 
-	int GeneracionObjetos() const
-	{
-		return generacion;
-	}
+	// Cambia cada vez que aparecen o desaparecen productos del piso.
+	int GeneracionObjetos() const { return generacion; }
+	static int MaximoObjetos() { return MaxObjetos; }
 
 	// Devuelve false si ese hueco no tiene un producto activo.
 	bool ObjetoActivo(
@@ -358,18 +356,34 @@ public:
 
 	const char* Aviso() const { return aviso; }
 	const char* Estado() const { return estado; }
+	const char* Motivo() const { return motivo; }
 	const char* LineaCliente() const { return lineaVisible; }
-	const char* Opcion(int indice) const
+	const char* NombreCliente() const { return Guion()[IndiceCliente()].nombre; }
+	int NumeroLinea() const { return linea; }
+
+	const char* Opcion(int slot) const
 	{
-		if (indice < 0 || indice > 2)
+		if (slot < 0 || slot > 2)
 			return "";
 
-		return opcionVisible[indice];
+		return opcionVisible[slot];
 	}
 
-	int OpcionMarcada() const
+	// Slot (0..2) donde esta el cursor; -1 si aun no se elige.
+	int Seleccion() const { return seleccion; }
+
+	// true mientras se muestra la reaccion a la respuesta elegida.
+	bool Respondida() const { return respondida; }
+
+	int SegundosRestantes() const
 	{
-		return opcionMarcada;
+		int s = (int)ceilf(LimiteEspera - espera);
+		return s < 0 ? 0 : s;
+	}
+
+	bool CuentaRegresivaActiva() const
+	{
+		return fase == Fase::ClienteEsperando || fase == Fase::Limpieza;
 	}
 
 private:
@@ -384,6 +398,9 @@ private:
 		Victoria,
 		Derrota
 	};
+
+	// Orden original del guion: 0 = humana, 1 = rara, 2 = alienigena.
+	enum Tipo { Humana = 0, Rara = 1, Alien = 2 };
 
 	struct LineaGuion
 	{
@@ -416,19 +433,11 @@ private:
 		float caida = 0.0f;
 	};
 
-	// Hueco de la puerta del Oxxo, en coordenadas de mundo.
-	// Sale de las cajas entrada_der / entrada_izq (modelo en -35, 25).
+	// Interior del Oxxo (modelo en -35, 25). Solo la parte de adentro,
+	// lejos del marco de la puerta, para no encerrar al jugador en ella.
 	static bool DentroDelOxxo(float x, float z)
 	{
-		const bool porLaPuerta =
-			x > -39.0f && x < -30.0f &&
-			z < 43.2f && z > 18.0f;
-
-		const bool enElFondo =
-			x > -58.0f && x < -12.0f &&
-			z > 8.0f && z < 40.0f;
-
-		return porLaPuerta || enElFondo;
+		return x > -58.0f && x < -12.0f && z > 8.0f && z < 40.0f;
 	}
 
 	static float Distancia(float x0, float z0, float x1, float z1)
@@ -443,139 +452,139 @@ private:
 		static const ClienteGuion guion[3] =
 		{
 			{
-				"VECINO APURADO",
-				"LLEGA DE PRISA GOLPEANDO EL MOSTRADOR. LLEVA UNA COCA Y UNAS PAPAS.",
+				"El Vecino Apurado",
+				"Llega de prisa golpeando el mostrador. Trae una coca y unas papas.",
 				{
 					{
-						"QUE TRANSA, BRO! ME URGE PAGAR ESTO QUE VOY TARDE AL JALE. ME COBRAS RAPIDO?",
+						"¡Qué transa, bro! Me urge pagar esto que voy tarde al jale. ¿Me cobras rápido?",
 						{
-							"CLARO QUE SI, JEFE. SON 45 PESOS EN TOTAL, VA A SER EN EFECTIVO O TARJETA?",
-							"AFIRMATIVO, TERRICOLA. INTERCAMBIO ESTE CILINDRO DE AZUCAR POR TUS CREDITOS TERRESTRES.",
-							"MIS ANTENAS CAPTAN QUE TU PULSO CARDIACO ES ACELERADO. VENERAS AL GRAN DIOS ZORGON?"
+							"Claro que sí, jefe. Son 45 pesos en total, ¿va a ser en efectivo o tarjeta?",
+							"Afirmativo, terrícola. Intercambio este cilindro de azúcar por tus créditos terrestres.",
+							"Mis antenas captan que tu pulso cardíaco es acelerado. ¿Veneras al gran dios Zorgon?"
 						}
 					},
 					{
-						"TIENES CAMBIO DE UN BILLETE DE 500? ES QUE NO TRAIGO MAS CHICO.",
+						"¿Tienes cambio de un billete de 500? Es que no traigo más chico.",
 						{
-							"SI TE ALCANZO A DAR CAMBIO, DEJAME REVISAR LA CAJA REGISTRADORA.",
-							"EL PAPEL MONEDA CARECE DE VALOR REAL EN MI GALAXIA, PERO ACEPTO TU TRIBUTO.",
-							"MUERDE EL BILLETE PARA VERIFICAR QUE NO SEA UN HOLOGRAMA SINTETICO DE LA RESISTENCIA."
+							"Sí te alcanzo a dar cambio, déjame revisar la caja registradora.",
+							"El papel moneda carece de valor real en mi galaxia, pero acepto tu tributo.",
+							"Muerde el billete para verificar que no sea un holograma sintético de la resistencia."
 						}
 					},
 					{
-						"OYE, ESTA SIRVIENDO EL CAJERO AUTOMATICO DE AFUERA? ES QUE NO TRAIGO EFECTIVO.",
+						"Oye, ¿está sirviendo el cajero automático de afuera? Es que no traigo efectivo.",
 						{
-							"LA NETA NO SE, CARNAL, HAZTE EL FAVOR DE CHECARLO TU MISMO SALIENDO A LA IZQUIERDA.",
-							"ESE MONOLITO ELECTRONICO SUELE FALLAR CUANDO LAS ALINEACIONES ESTELARES CAMBIAN.",
-							"LOS CAJEROS ABSORBEN ELMAS DE LOS HUMANOS DESPREVENIDOS. NO CAIGAS EN SU TRAMPA."
+							"La neta no sé, carnal, hazte el favor de checarlo tú mismo saliendo a la izquierda.",
+							"Ese monolito electrónico suele fallar cuando las alineaciones estelares cambian.",
+							"Los cajeros absorben elmas de los humanos desprevenidos. No caigas en su trampa."
 						}
 					},
 					{
-						"ME DAS UNA BOLSA POR FAVOR? SE ME VA A CAER TODO.",
+						"¿Me das una bolsa por favor? Se me va a caer todo.",
 						{
-							"CLARO, TEN. ALGO MAS QUE SE TE OFREZCA?",
-							"CONTENEDOR DE PLASTICO ASIGNADO PARA TU MATERIA ORGANICA.",
-							"EN MI PLANETA LLEVAMOS LAS COSAS FLOTANDO CON TELEQUINESIS, QUE ATRASADOS ESTAN."
+							"Claro, ten. ¿Algo más que se te ofrezca?",
+							"Contenedor de plástico asignado para tu materia orgánica.",
+							"En mi planeta llevamos las cosas flotando con telequinesis, qué atrasados están."
 						}
 					},
 					{
-						"BUENO, TEN EL DINERO EXACTO. GRACIAS, JOVEN. BUEN DIA!",
+						"Bueno, ten el dinero exacto. Gracias, joven. ¡Buen día!",
 						{
-							"IGUALMENTE, QUE TE VAYA MUY BIEN EN TU CHAMBA. HASTA LUEGO!",
-							"QUE TU TEMPERATURA CORPORAL SE MANTENGA ESTABLE, HUMANO.",
-							"LARGA VIDA Y PROSPERIDAD... O LO QUE SEA QUE DURE TU EFIMERA ESPECIE."
+							"Igualmente, que te vaya muy bien en tu chamba. ¡Hasta luego!",
+							"Que tu temperatura corporal se mantenga estable, humano.",
+							"Larga vida y prosperidad... o lo que sea que dure tu efímera especie."
 						}
 					}
 				}
 			},
 			{
-				"SENORA DE LOS GATOS",
-				"ENTRA CON CALMA ARRASTRANDO LOS PIES Y OLIENDO A CROQUETAS. LLEVA LATAS.",
+				"La Señora de los Gatos",
+				"Entra con calma arrastrando los pies y oliendo a croquetas. Trae comida enlatada.",
 				{
 					{
-						"BUENAS TARDES, JOVEN. OIGA, TODAVIA HAY DE ESTAS LATAS DE ATUN EN OFERTA? NO LAS VEO EN EL ESTANTE.",
+						"Buenas tardes, joven. Oiga, ¿todavía hay de estas latas de atún en oferta? No las veo en el estante.",
 						{
-							"BUENAS TARDES, SENORA. DEJAME CHECAR EN LA BODEGA SI NOS QUEDO ALGO SURTIDO.",
-							"LAS PROVISIONES FELINAS ESCASEAN DEBIDO A LA TORMENTA SOLAR DE AYER.",
-							"POR QUE ALIMENTAS A ESAS CRIATURAS MUTANTES DE CUATRO PATAS? SON ESPIAS DE OTRO SISTEMA SOLAR."
+							"Buenas tardes, señora. Déjame checar en la bodega si nos quedó algo surtido.",
+							"Las provisiones felinas escasean debido a la tormenta solar de ayer.",
+							"¿Por qué alimentas a esas criaturas mutantes de cuatro patas? Son espías de otro sistema solar."
 						}
 					},
 					{
-						"AY, HIJO, TE VES UN POCO PALIDO Y CON LOS OJOS BIEN ABIERTOS. TE SIENTES BIEN?",
+						"Ay, hijo, te ves un poco pálido y con los ojos bien abiertos. ¿Te sientes bien?",
 						{
-							"ES QUE NO HE DORMIDO BIEN, SENORA, PURAS DESVELADAS POR LA CHAMBA.",
-							"MI EXOESQUELETO EXTERIOR SE ESTA ADAPTANDO A LA ATMOSFERA TERRESTRE.",
-							"MIS FILTROS OCULARES SE ESTAN SOBRECALENTANDO! NO ME MIRES FIJAMENTE."
+							"Es que no he dormido bien, señora, puras desveladas por la chamba.",
+							"Mi exoesqueleto exterior se está adaptando a la atmósfera terrestre.",
+							"¡Mis filtros oculares se están sobrecalentando! No me mires fijamente."
 						}
 					},
 					{
-						"ME PUEDES MARCAR ESTO CON CUIDADO? ES QUE A MI MICHI LE DAN MIEDO LOS GOLPES FUERTES.",
+						"¿Me puedes marcar esto con cuidado? Es que a mi michi le dan miedo los golpes fuertes.",
 						{
-							"SI, NO SE PREOCUPE, SE LOS TRATO CON MUCHO CUIDADO PARA QUE NO SE ABOLLEN.",
-							"TRATARE LAS LATAS CON LA PRECISION DE UN RAYO LASER DESINTEGRADOR.",
-							"LOS GATOS DE ESTA DIMENSION ME OBSERVAN CON DESPRECIO TELEPATICO."
+							"Sí, no se preocupe, se los trato con mucho cuidado para que no se abollen.",
+							"Trataré las latas con la precisión de un rayo láser desintegrador.",
+							"Los gatos de esta dimensión me observan con desprecio telepático."
 						}
 					},
 					{
-						"OIGA, SIGUE APLICANDO LO DE DONAR LOS CENTAVOS PARA LA FUNDACION?",
+						"Oiga, ¿sigue aplicando lo de donar los centavos para la fundación?",
 						{
-							"SI, GUSTA REDONDEAR SUS CENTAVOS EL DIA DE HOY?",
-							"DONARAS TUS RECURSOS A LA CAUSA DE RECONSTRUCCION INTERGALACTICA.",
-							"EL DINERO ES UNA ILUSION CAPITALISTA DISENADA PARA ESCLAVIZAR A LOS SIMIOS."
+							"Sí, ¿gusta redondear sus centavos el día de hoy?",
+							"Donarás tus recursos a la causa de reconstrucción intergaláctica.",
+							"El dinero es una ilusión capitalista diseñada para esclavizar a los simios."
 						}
 					},
 					{
-						"TENGA SU DINERO Y SU TICKET. GRACIAS POR LA ATENCION, MIJITO.",
+						"Tenga su dinero y su ticket. Gracias por la atención, mijito.",
 						{
-							"DE NADA, QUE TENGA UNA EXCELENTE TARDE Y SALUDOS A SU MICHI.",
-							"MIS SENSORES REGISTRAN TRANSACCION EXITOSA. ADIOS, TERRICOLA ANCIANA.",
-							"EJECUTANDO PROTOCOLO DE DESPEDIDA HUMANA... BEEP BOOP."
+							"De nada, que tenga una excelente tarde y saludos a su michi.",
+							"Mis sensores registran transacción exitosa. Adiós, terrícola anciana.",
+							"Ejecutando protocolo de despedida humana... beep boop."
 						}
 					}
 				}
 			},
 			{
-				"SUJETO MISTERIOSO",
-				"TRAE LENTES DE SOL DE NOCHE Y ACTUA DE MANERA SOSPECHOSA. COMPRA CAFE Y UN ENCENDEDOR.",
+				"El Sujeto Misterioso",
+				"Usa lentes de sol de noche y actúa de manera muy sospechosa. Compra café y un encendedor.",
 				{
 					{
-						"BUENAS. VENGO POR UN CAFE BIEN CARGADO. OYE, NO HAS ESCUCHADO RUIDOS RAROS EN EL CIELO ULTIMAMENTE?",
+						"Buenas. Vengo por un café bien cargado. Oye, ¿no has escuchado ruidos raros en el cielo últimamente?",
 						{
-							"BUENAS. LA NETA NO, AQUI EN EL DESIERTO SIEMPRE ESTA BIEN TRANQUILO EL ROLLO.",
-							"SON SOLO PRUEBAS DE SATELITES MILITARES GUBERNAMENTALES, NADA DE QUE PREOCUPARSE.",
-							"ERAN MIS COMPAS PASANDO A SALUDAR EN SU NAVE NODRIZA! DIGO... CUALES NAVES?"
+							"Buenas. La neta no, aquí en el desierto siempre está bien tranquilo el rollo.",
+							"Son solo pruebas de satélites militares gubernamentales, nada de qué preocuparse.",
+							"¡Eran mis compas pasando a saludar en su nave nodriza! Digo... ¿cuáles naves?"
 						}
 					},
 					{
-						"QUE RESPUESTA TAN DEFENSIVA. ESTAS SEGURO DE QUE ERES DE POR AQUI? NUNCA TE HABIA VISTO EN ESTE TURNO.",
+						"Hmm, qué respuesta tan defensiva. ¿Estás seguro de que eres de por aquí? Nunca te había visto en este turno.",
 						{
-							"ACABO DE ENTRAR ESTA SEMANA, CARNAL, POR ESO NO ME UBICAS TODAVIA.",
-							"MI ADN CUMPLE CON TODOS LOS ESTANDARES REQUERIDOS POR LA LEY LABORAL MEXICANA.",
-							"ME DESCUBRISTE! VENGO DEL CUADRANTE ZETA RETICULI A ESTUDIAR SUS SNACKS."
+							"Acabo de entrar esta semana, carnal, por eso no me ubicas todavía.",
+							"Mi ADN cumple con todos los estándares requeridos por la ley laboral mexicana.",
+							"¡Me descubriste! Vengo del cuadrante Zeta Reticuli a estudiar sus snacks."
 						}
 					},
 					{
-						"JAJA, TE ESTOY COTORREANDO, TRANQUILO. CUANTO ES DEL CAFE Y EL ENCENDEDOR?",
+						"Jaja, te estoy cotorreando, tranquilo. ¿Cuánto es del café y el encendedor?",
 						{
-							"AH, JOTERIA CONTIGO, ME SUSTO. SON 32 PESOS CERRADOS.",
-							"TRANSFERENCIA DE 32 UNIDADES MONETARIAS PROCESADA CORRECTAMENTE.",
-							"TUS BROMAS DE SIMIO GENERAN CONFUSION EN MIS CIRCUITOS CEREBRALES."
+							"Ah, jotería contigo, me susto. Son 32 pesos cerrados.",
+							"Transferencia de 32 unidades monetarias procesada correctamente.",
+							"Tus bromas de simio generan confusión en mis circuitos cerebrales."
 						}
 					},
 					{
-						"OYE, SE TE CAYERON UNAS MONEDAS HACE RATO Y CAMINAS BIEN RARO, COMO SI TE DOLIERAN LAS RODILLAS.",
+						"Oye, se te cayeron unas monedas hace rato y caminas bien raro, como si te dolieran las rodillas.",
 						{
-							"ES QUE ANDO BIEN CANSADO POR LA MALA POSTURA DE ESTAR PARADO TODO EL TURNO.",
-							"LAS ARTICULACIONES BIPEDESTAS DE LOS HUMANOS SON MUY DEFECTUOSAS.",
-							"MIS SERVOMECANISMOS INTERNOS NECESITAN LUBRICACION CON ACEITE DE MOTOR ESPACIAL."
+							"Es que ando bien cansado por la mala postura de estar parado todo el turno.",
+							"Las articulaciones bipedestas de los humanos son muy defectuosas.",
+							"Mis servomecanismos internos necesitan lubricación con aceite de motor espacial."
 						}
 					},
 					{
-						"BUENO, TEN TU LANA. SUERTE CON TU TURNO, COMPA... Y CUIDATE DE LO QUE CAE DEL CIELO.",
+						"Bueno, ten tu lana. Suerte con tu turno, compa... y cuídate de lo que cae del cielo.",
 						{
-							"GRACIAS, IGUALMENTE, CUIDATE MUCHO EN LA CALLE. NOS VEMOS.",
-							"MIS SISTEMAS DE NAVEGACION ESTAN LISTOS PARA EL DESPEGUE NOCTURNO.",
-							"ACTIVANDO SECUENCIA DE ESCAPE ESTELAR EN 3... 2... 1..."
+							"Gracias, igualmente, cuídate mucho en la calle. Nos vemos.",
+							"Mis sistemas de navegación están listos para el despegue nocturno.",
+							"Activando secuencia de escape estelar en 3... 2... 1..."
 						}
 					}
 				}
@@ -589,15 +598,35 @@ private:
 	{
 		static const Estante estantes[TotalEstantes] =
 		{
-			{ -20.0f, 35.0f, L"Assets/Billboards/cokita.png", "COKITA" },
-			{ -24.0f, 35.0f, L"Assets/Billboards/doritos.png", "DORITOS" },
-			{ -28.0f, 35.0f, L"Assets/Billboards/boing.png", "BOING" },
-			{ -32.0f, 30.0f, L"Assets/Billboards/oreo.png", "OREO" },
-			{ -36.0f, 30.0f, L"Assets/Billboards/nutri.png", "NUTRI" },
-			{ -40.0f, 25.0f, L"Assets/Billboards/hersheys.png", "HERSHEYS" },
+			{ -20.0f, 35.0f, L"Assets/Billboards/cokita.png", "la Cokita" },
+			{ -24.0f, 35.0f, L"Assets/Billboards/doritos.png", "los Doritos" },
+			{ -28.0f, 35.0f, L"Assets/Billboards/boing.png", "el Boing" },
+			{ -32.0f, 30.0f, L"Assets/Billboards/oreo.png", "las Oreo" },
+			{ -36.0f, 30.0f, L"Assets/Billboards/nutri.png", "el Nutri" },
+			{ -38.0f, 25.0f, L"Assets/Billboards/hersheys.png", "el Hershey's" },
 		};
 
 		return estantes;
+	}
+
+	// Corre el reloj de 20 s. Devuelve false si el jugador murio.
+	bool ContarEspera(float dt)
+	{
+		espera += dt;
+
+		while (espera >= LimiteEspera)
+		{
+			espera -= LimiteEspera;
+			Danar(DanoEspera);
+
+			if (vida <= 0.0f)
+			{
+				Perder("Hiciste esperar demasiado a los clientes. Te corrieron del Oxxo.");
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	void Danar(float cantidad)
@@ -607,63 +636,78 @@ private:
 			vida = 0.0f;
 	}
 
-	void Morir()
+	void Perder(const char* razon)
 	{
-		vida = 0.0f;
+		vida = vida < 0.0f ? 0.0f : vida;
 		fase = Fase::Derrota;
+		if (llevando >= 0)
+			objetos[llevando].enMano = false;
 		llevando = -1;
-		sprintf_s(
-			aviso,
-			"TE QUEDASTE SIN VIDA. DESCUBRIERON QUE NO ERES DE AQUI.");
+		sprintf_s(motivo, "%s", razon);
+		sprintf_s(aviso, "%s", razon);
 	}
 
 	void EntrarDialogo()
 	{
 		fase = Fase::Dialogo;
 		linea = 0;
-		opcionMarcada = 0;
-		pausa = 0.0f;
+		ticket = 0.0f;
+		clienteMolesto = false;
 		pedirReposicion = true;
-		ConstruirTextos();
-		sprintf_s(aviso, "PULSA 1, 2 O 3 PARA RESPONDER.");
+		PrepararLinea();
 	}
 
-	void Elegir(int indice)
+	void Responder(int slot)
 	{
-		opcionMarcada = indice;
+		const int tipo = orden[slot];
+		seleccion = slot;
+		respondida = true;
+		pausa = 1.1f;
 
-		if (indice == 0)
+		if (tipo == Humana)
 		{
-			vida += 8.0f;
-			if (vida > 100.0f)
-				vida = 100.0f;
+			vida += CuraHumana;
+			if (vida > VidaMaxima)
+				vida = VidaMaxima;
 
-			sprintf_s(aviso, "RESPUESTA HUMANA. EL CLIENTE NO SOSPECHA.");
+			if (!clienteMolesto)
+			{
+				ticket += PagoHumano;
+				sprintf_s(aviso, "Respuesta humana. El cliente sigue comprando (+%.0f pesos).", PagoHumano);
+			}
+			else
+			{
+				sprintf_s(aviso, "Respuesta humana, pero el cliente ya no quiere comprar nada más.");
+			}
 		}
-		else if (indice == 1)
+		else if (tipo == Rara)
 		{
-			Danar(12.0f);
-			sprintf_s(aviso, "RESPUESTA SOSPECHOSA. PIERDES UN BLOQUE DE VIDA.");
+			Danar(DanoRaro);
+
+			if (!clienteMolesto)
+			{
+				ticket += PagoRaro;
+				sprintf_s(aviso, "Respuesta rara. El cliente sospecha (-%.0f vida, solo +%.0f pesos).", DanoRaro, PagoRaro);
+			}
+			else
+			{
+				sprintf_s(aviso, "Respuesta rara. El cliente sospecha (-%.0f vida).", DanoRaro);
+			}
 		}
 		else
 		{
-			Danar(30.0f);
-			sprintf_s(aviso, "RESPUESTA ALIENIGENA. LA VIDA BAJA DE GOLPE.");
+			Danar(DanoAlien);
+			clienteMolesto = true;
+			sprintf_s(aviso, "¡Respuesta alienígena! (-%.0f vida). El cliente ya no quiere comprar nada más.", DanoAlien);
 		}
 
 		if (vida <= 0.0f)
-		{
-			Morir();
-			return;
-		}
-
-		pausa = 0.55f;
+			Perder("Tus respuestas fueron demasiado alienígenas. Descubrieron que no eres de aquí.");
 	}
 
 	void AvanzarLinea()
 	{
 		linea++;
-		opcionMarcada = 0;
 
 		if (linea >= 5)
 		{
@@ -671,30 +715,61 @@ private:
 			return;
 		}
 
-		ConstruirTextos();
-		sprintf_s(aviso, "PULSA 1, 2 O 3 PARA RESPONDER.");
+		PrepararLinea();
 	}
 
 	void TerminarCliente()
 	{
-		pesos += 200.0f;
+		pesos += ticket;
+		const float cobrado = ticket;
+		ticket = 0.0f;
+		respondida = false;
+		seleccion = -1;
 
 		if (cliente >= 2)
 		{
 			fase = Fase::Noche;
-			sprintf_s(
-				aviso,
-				"ATENDISTE AL TERCER CLIENTE. ANOCHECIO. JUNTASTE %.0f PESOS.",
-				pesos);
+
+			if (pesos >= MetaPesos)
+				sprintf_s(aviso, "Terminó el turno y anocheció. Juntaste %.0f pesos: ¡alcanza para la pieza!", pesos);
+			else
+				sprintf_s(aviso, "Terminó el turno y anocheció. Solo juntaste %.0f de %.0f pesos.", pesos, MetaPesos);
 			return;
 		}
 
 		fase = Fase::Limpieza;
+		espera = 0.0f;
 		SoltarObjetos();
-		sprintf_s(
-			aviso,
-			"EL CLIENTE SE FUE. CAYERON %d PRODUCTOS DE LOS ESTANTES.",
-			ObjetosActivos());
+		sprintf_s(aviso, "El cliente pagó %.0f pesos y se fue. ¡Se cayeron %d productos!", cobrado, ObjetosActivos());
+	}
+
+	// Baraja las 3 opciones y arma los textos de la linea actual.
+	void PrepararLinea()
+	{
+		seleccion = -1;
+		respondida = false;
+		pausa = 0.0f;
+
+		for (int i = 0; i < 3; ++i)
+			orden[i] = i;
+
+		for (int i = 2; i > 0; --i)
+		{
+			const int j = rand() % (i + 1);
+			const int t = orden[i];
+			orden[i] = orden[j];
+			orden[j] = t;
+		}
+
+		const ClienteGuion& guion = Guion()[IndiceCliente()];
+		const LineaGuion& actual = guion.lineas[linea];
+
+		sprintf_s(lineaVisible, "%s: %s", guion.nombre, actual.cliente);
+
+		for (int slot = 0; slot < 3; ++slot)
+			sprintf_s(opcionVisible[slot], "%d. %s", slot + 1, actual.opciones[orden[slot]]);
+
+		sprintf_s(aviso, "Elige con 1, 2 o 3 y confirma con ENTER o E.  (Pregunta %d de 5)", linea + 1);
 	}
 
 	void SoltarObjetos()
@@ -709,7 +784,7 @@ private:
 		int creados = 0;
 		int guardia = 0;
 
-		while (creados < cantidad && guardia < 40)
+		while (creados < cantidad && guardia < 60)
 		{
 			const int estante = rand() % TotalEstantes;
 			guardia++;
@@ -725,7 +800,7 @@ private:
 			objeto.estante = estante;
 			objeto.caida = 0.0f;
 			objeto.x = Estantes()[estante].x;
-			objeto.z = Estantes()[estante].z + 1.4f;
+			objeto.z = Estantes()[estante].z - 2.5f;
 			creados++;
 		}
 
@@ -745,7 +820,8 @@ private:
 				objetos[llevando].enMano = false;
 				llevando = -1;
 				generacion++;
-				sprintf_s(aviso, "PRODUCTO DEVUELTO A SU ESTANTE.");
+				espera = 0.0f; // devolver un producto cuenta como atender
+				sprintf_s(aviso, "Producto devuelto a su estante.");
 				return true;
 			}
 
@@ -756,7 +832,7 @@ private:
 
 				if (Distancia(jugadorX, jugadorZ, Estantes()[i].x, Estantes()[i].z) <= RadioEstante)
 				{
-					sprintf_s(aviso, "ESE NO ES SU ESTANTE. BUSCA EL MARCADO EN EL AVISO.");
+					sprintf_s(aviso, "Ese no es su estante. Busca las coordenadas del aviso.");
 					return true;
 				}
 			}
@@ -772,11 +848,7 @@ private:
 			if (!objetos[i].activo || objetos[i].enMano)
 				continue;
 
-			const float distancia = Distancia(
-				jugadorX,
-				jugadorZ,
-				objetos[i].x,
-				objetos[i].z);
+			const float distancia = Distancia(jugadorX, jugadorZ, objetos[i].x, objetos[i].z);
 
 			if (distancia <= mejorDistancia)
 			{
@@ -791,10 +863,8 @@ private:
 		objetos[mejor].enMano = true;
 		llevando = mejor;
 		pedirRecogida = true;
-		sprintf_s(
-			aviso,
-			"RECOGISTE %s. LLEVALO A SU ESTANTE.",
-			Estantes()[objetos[mejor].estante].nombre);
+		generacion++;
+		sprintf_s(aviso, "Recogiste %s. Llévalo a su estante.", Estantes()[objetos[mejor].estante].nombre);
 		return true;
 	}
 
@@ -811,67 +881,45 @@ private:
 		return total;
 	}
 
-	void ConstruirTextos()
-	{
-		if (cliente < 0 || cliente > 2 || linea < 0 || linea > 4)
-			return;
-
-		const ClienteGuion& guion = Guion()[cliente];
-		const LineaGuion& actual = guion.lineas[linea];
-
-		sprintf_s(lineaVisible, "%s: %s", guion.nombre, actual.cliente);
-
-		for (int i = 0; i < 3; ++i)
-		{
-			sprintf_s(
-				opcionVisible[i],
-				"%d  %s",
-				i + 1,
-				actual.opciones[i]);
-		}
-	}
-
 	void RefrescarEstado()
 	{
-		sprintf_s(
-			estado,
-			"VIDA %.0f    PESOS %.0f / 600",
-			vida,
-			pesos);
+		if (fase == Fase::Dialogo)
+			sprintf_s(estado, "$%.0f / %.0f\nTicket: $%.0f", pesos, MetaPesos, ticket);
+		else
+			sprintf_s(estado, "$%.0f / %.0f", pesos, MetaPesos);
 	}
 
 	static const int MaxObjetos = 3;
 	static const int TotalEstantes = 6;
-	static constexpr float CajaX = -48.0f;
-	static constexpr float CajaZ = 30.0f;
-	static constexpr float PuestoX = -45.5f;
-	static constexpr float PuestoZ = 30.0f;
 	static constexpr float RadioCaja = 7.0f;
-	static constexpr float RadioRecoger = 2.6f;
-	static constexpr float RadioEstante = 4.2f;
-	static constexpr float NaveX = -35.0f;
-	static constexpr float NaveZ = 62.0f;
+	static constexpr float RadioRecoger = 3.0f;
+	static constexpr float RadioEstante = 4.5f;
 	static constexpr float RadioNave = 8.0f;
 
 	Fase fase = Fase::Explorando;
 	int cliente = 0;
 	int linea = 0;
-	int opcionMarcada = 0;
+	int seleccion = -1;
+	bool respondida = false;
+	int orden[3] = { 0, 1, 2 };
 	float pausa = 0.0f;
 	float timer = 0.0f;
 	float espera = 0.0f;
-	float vida = 100.0f;
+	float vida = VidaMaxima;
 	float pesos = 0.0f;
+	float ticket = 0.0f;
+	bool clienteMolesto = false;
 	int llevando = -1;
 	int generacion = 0;
 	bool pedirReposicion = false;
 	bool pedirRecogida = false;
 
 	ObjetoSuelo objetos[MaxObjetos];
-	char lineaVisible[420];
-	char opcionVisible[3][260];
-	char aviso[420];
+	char lineaVisible[512];
+	char opcionVisible[3][320];
+	char aviso[512];
 	char estado[160];
+	char motivo[256];
 };
 
 #endif

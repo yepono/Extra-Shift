@@ -16,8 +16,10 @@
 #pragma comment (lib, "d3dx11.lib")
 #pragma comment (lib, "d3dx10.lib")
 
-#define SCREEN_X 1920
-#define SCREEN_Y 1080
+// La ventana ocupa la pantalla real del monitor. Antes era 1920x1080 fijo
+// y en monitores mas chicos (p. ej. 1366x768) el HUD quedaba fuera.
+#define SCREEN_X GetSystemMetrics(SM_CXSCREEN)
+#define SCREEN_Y GetSystemMetrics(SM_CYSCREEN)
 
 LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -152,7 +154,7 @@ void ProcessInput(HWND hWnd, float deltaTime)
     bool cKeyIsDown =
         (keyboardData[DIK_C] & 0x80) != 0;
 
-    if (cKeyIsDown && !cKeyWasDown)
+    if (cKeyIsDown && !cKeyWasDown && !dxrr->CamaraBloqueada())
     {
         // playerPosition is the single source of truth for both camera modes,
         // so toggling only changes how the camera is placed around it.
@@ -160,6 +162,42 @@ void ProcessInput(HWND hWnd, float deltaTime)
     }
 
     cKeyWasDown = cKeyIsDown;
+
+    // Teclas del turno: solo cuentan en el frame en que se presionan.
+    static bool teclaAnterior[256] = {};
+
+    auto Presionada = [&](int dik) -> bool
+        {
+            const bool ahora = (keyboardData[dik] & 0x80) != 0;
+            const bool flanco = ahora && !teclaAnterior[dik];
+            teclaAnterior[dik] = ahora;
+            return flanco;
+        };
+
+    if (Presionada(DIK_E))
+    {
+        dxrr->teclaInteractuar = true;
+        dxrr->teclaConfirmar = true;
+    }
+
+    const bool enter = Presionada(DIK_RETURN);
+    const bool enterNumerico = Presionada(DIK_NUMPADENTER);
+    if (enter || enterNumerico)
+        dxrr->teclaConfirmar = true;
+
+    const bool uno = Presionada(DIK_1);
+    const bool unoNumerico = Presionada(DIK_NUMPAD1);
+    const bool dos = Presionada(DIK_2);
+    const bool dosNumerico = Presionada(DIK_NUMPAD2);
+    const bool tres = Presionada(DIK_3);
+    const bool tresNumerico = Presionada(DIK_NUMPAD3);
+
+    if (uno || unoNumerico) dxrr->teclaOpcion = 1;
+    if (dos || dosNumerico) dxrr->teclaOpcion = 2;
+    if (tres || tresNumerico) dxrr->teclaOpcion = 3;
+
+    if (Presionada(DIK_R))
+        dxrr->teclaReiniciar = true;
 
     // Mostrar u ocultar las cajas de colision (F1)
 
@@ -298,7 +336,7 @@ void ProcessInput(HWND hWnd, float deltaTime)
             bool bIsDown =
                 (pad.wButtons & XINPUT_GAMEPAD_B) != 0;
 
-            if (bIsDown && !previousB)
+            if (bIsDown && !previousB && !dxrr->CamaraBloqueada())
             {
                 // Same as the C key: playerPosition stays put.
                 dxrr->thirdPerson =

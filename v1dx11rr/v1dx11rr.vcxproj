@@ -193,6 +193,8 @@
     <ClInclude Include="Colision.h" />
     <ClInclude Include="ColisionDebug.h" />
     <ClInclude Include="TextoPantalla.h" />
+    <ClInclude Include="HudTextura.h" />
+    <ClInclude Include="TurnoExtraShift.h" />
     <ClInclude Include="DXRR.h" />
     <ClInclude Include="FBXImporter.h" />
     <ClInclude Include="GamePadRR.h" />

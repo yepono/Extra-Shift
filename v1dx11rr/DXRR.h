@@ -15,6 +15,8 @@
 #include "Colision.h"
 #include "ColisionDebug.h"
 #include "TextoPantalla.h"
+#include "HudTextura.h"
+#include "TurnoExtraShift.h"
 #include <cstdio>
 
 class DXRR {
@@ -138,6 +140,54 @@ public:
 	TextoPantalla textoPantalla;
 	bool mostrarCoordenadas = true;
 
+	// ---- Flujo de juego (turno en el Oxxo) ------------------------------
+	TurnoExtraShift turno;
+
+	// HUD 2D: las texturas de Assets/Billboards son de 1920x1080 y cada
+	// sprite ya viene en su lugar; se recortan por UV para acomodarlos.
+	enum TexturaHud
+	{
+		HudFondoDialogo = 0,      // fondoDialogos
+		HudRespuesta = 1,         // respuestaDialogo
+		HudSeleccionado = 2,      // dialogoSeleccionado
+		HudCursor = 3,            // cursorDialogo
+		HudBarra = 4,             // barra
+		HudBarraRelleno = 5,      // barrabarra
+	};
+	HudTextura hud;
+
+	// Productos tirados en el piso (billboards que se rehacen al cambiar).
+	BillboardRR* productosCaidos = nullptr;
+	int generacionProductos = -1;
+	int billboardDeProducto[3] = { -1, -1, -1 };
+
+	// Clientes animados frente a la caja: 0 = chava, 1 = chavo (se alternan).
+	AnimatedModel* clientes[2] = { nullptr, nullptr };
+	bool clienteCargado[2] = { false, false };
+	float ySueloCliente = 0.0f;
+
+	// Puerta del Oxxo (caja de colision que se activa durante el turno).
+	size_t indicePuerta = (size_t)-1;
+	bool puertaCerrada = false;
+
+	bool nocheAplicada = false;
+	bool dialogoAnterior = false;
+	bool terceraAntesDialogo = true;
+	D3DXVECTOR3 inicioJugador;
+
+	// Teclas del frame.
+	bool teclaInteractuar = false;
+	bool teclaConfirmar = false;
+	bool teclaReiniciar = false;
+	int teclaOpcion = 0;
+
+	// La camara no se puede alternar ni girar en el dialogo o en la
+	// pantalla final.
+	bool CamaraBloqueada() const
+	{
+		return turno.BloquearMovimiento();
+	}
+
 	// Volumen del jugador: radio en XZ y altura en Y.
 	float radioJugador = 0.2f;
 	float alturaJugador = 3.0f;
@@ -165,6 +215,19 @@ public:
 		IniciaD3D(hWnd);
 		depuradorColision.Inicializar(d3dDevice, d3dContext);
 		textoPantalla.Inicializar(d3dDevice, d3dContext);
+
+		if (hud.Inicializar(d3dDevice, d3dContext))
+		{
+			hud.Cargar(HudFondoDialogo, L"Assets/Billboards/fondoDialogos.png");
+			hud.Cargar(HudRespuesta, L"Assets/Billboards/respuestaDialogo.png");
+			hud.Cargar(HudSeleccionado, L"Assets/Billboards/dialogoSeleccionado.png");
+			hud.Cargar(HudCursor, L"Assets/Billboards/cursorDialogo.png");
+			hud.Cargar(HudBarra, L"Assets/Billboards/barra.png");
+			hud.Cargar(HudBarraRelleno, L"Assets/Billboards/barrabarra.png");
+		}
+
+		productosCaidos = new BillboardRR();
+		productosCaidos->Inicializar(d3dDevice, d3dContext);
 
 		moveBackForward = 0.0f;
 		moveLeftRight = 0.0f;
@@ -294,6 +357,44 @@ public:
 			alien_anim->GetPosX(),
 			terreno->Superficie(alien_anim->GetPosX(), alien_anim->GetPosZ()),
 			alien_anim->GetPosZ());
+		inicioJugador = playerPosition;
+
+		// Clientes del turno: el mismo FBX trae la malla y el idle.
+		{
+			const char* modelos[2] =
+			{
+				"Assets/Modelos/Persona/chava1_idle.fbx",
+				"Assets/Modelos/Persona/chavo1_idle.fbx",
+			};
+
+			const char* texturas[2] =
+			{
+				"Assets/Modelos/Persona/chava1.jpeg",
+				"Assets/Modelos/Persona/chavo3.jpeg",
+			};
+
+			for (int i = 0; i < 2; ++i)
+			{
+				clientes[i] = new AnimatedModel(
+					d3dDevice,
+					d3dContext,
+					TurnoExtraShift::ClienteX,
+					TurnoExtraShift::ClienteZ);
+
+				clienteCargado[i] = clientes[i]->Load(modelos[i], texturas[i]);
+
+				if (!clienteCargado[i])
+				{
+					OutputDebugStringA("DXRR: no se pudo cargar un cliente FBX.\n");
+					continue;
+				}
+
+				if (clientes[i]->LoadAnimationFile(modelos[i], "Idle"))
+					clientes[i]->PlayAnimation("Idle");
+				else
+					OutputDebugStringA("DXRR: el cliente FBX no trae animacion Idle.\n");
+			}
+		}
 
 		// Registra las cajas del escenario.
 		ConfigurarColisiones();
@@ -349,6 +450,14 @@ public:
 	{
 		delete alien_anim;
 		alien_anim = nullptr;
+		for (int i = 0; i < 2; ++i)
+		{
+			delete clientes[i];
+			clientes[i] = nullptr;
+		}
+		delete productosCaidos;
+		productosCaidos = nullptr;
+		hud.Liberar();
 		depuradorColision.Liberar();
 		textoPantalla.Liberar();
 		delete billboard;
@@ -604,6 +713,30 @@ public:
 
 		paneles.Dibujar(camara->View, camara->Projection);
 
+		// Productos tirados en el piso / en la mano del jugador.
+		if (productosCaidos != nullptr)
+			productosCaidos->Dibujar(camara->View, camara->Projection, camara->Position);
+
+		// Cliente en turno frente a la caja (se alternan chava y chavo).
+		if (turno.ClienteVisibleEnCaja())
+		{
+			const int i = turno.IndiceCliente() % 2;
+
+			if (clienteCargado[i])
+			{
+				clientes[i]->Draw(
+					&camara->View._11,
+					&camara->Projection._11,
+					ySueloCliente,
+					TurnoExtraShift::YawHaciaPuesto(),
+					D3DXToRadian(0.0f),
+					D3DXToRadian(-90.0f),
+					D3DXToRadian(-90.0f),
+					0.28f,
+					0.0f);
+			}
+		}
+
 
 		// prueba fbx
 		if (alienAnimLoaded && alien_anim != nullptr)
@@ -661,6 +794,9 @@ public:
 			textoPantalla.Dibujar(textoCoordenadas);
 		}
 
+		// HUD del turno: vida, dinero, avisos, dialogo y pantalla final.
+		DibujarHud();
+
 		// Present()
 		if (swapChain != nullptr)
 		{
@@ -670,6 +806,10 @@ public:
 
 	void Update(float deltaTime)
 	{
+		// Logica del turno: puede bloquear el movimiento, fijar la camara
+		// o mover al jugador a la caja, asi que va antes de la camara.
+		ActualizarTurno(deltaTime);
+
 		const bool isMoving =
 			fabsf(moveBackForward) > 0.001f ||
 			fabsf(moveLeftRight) > 0.001f;
@@ -702,10 +842,8 @@ public:
 				playerPosition.z));
 
 		// Keep the character model in sync with the player in both modes.
-		bool alienPickupLoaded = false;
-		bool pickupRequested = false;
-		bool pickupPlaying = false;
-
+		// (pickupRequested / pickupPlaying son miembros: los pide el turno
+		// al recoger un producto del piso.)
 		if (alienAnimLoaded && alien_anim != nullptr)
 		{
 			alien_anim->SetPosition(
@@ -736,6 +874,317 @@ public:
 				alien_anim->Update(deltaTime);
 			}
 		}
+
+		// Idle del cliente que esta en la caja.
+		if (turno.ClienteVisibleEnCaja())
+		{
+			const int i = turno.IndiceCliente() % 2;
+			if (clienteCargado[i])
+				clientes[i]->Update(deltaTime);
+		}
+
+		ActualizarProductosCaidos();
+	}
+
+	// ---- Flujo de juego ----------------------------------------------------
+
+	void ActualizarTurno(float deltaTime)
+	{
+		if (turno.JuegoTerminado() && teclaReiniciar)
+			ReiniciarJuego();
+
+		turno.Actualizar(
+			deltaTime,
+			playerPosition.x,
+			playerPosition.z,
+			teclaInteractuar,
+			teclaOpcion,
+			teclaConfirmar);
+
+		teclaInteractuar = false;
+		teclaConfirmar = false;
+		teclaReiniciar = false;
+		teclaOpcion = 0;
+
+		// Puertas: cerradas desde que entra hasta que anochece.
+		const bool cerrar = turno.PuertaBloqueada();
+		if (cerrar != puertaCerrada)
+		{
+			colisiones.ActivarCaja(indicePuerta, cerrar);
+			puertaCerrada = cerrar;
+		}
+
+		// Dialogo: primera persona forzada, mirando al cliente, sin girar.
+		const bool enDialogo = turno.ForzarPrimeraPersona();
+
+		if (enDialogo && !dialogoAnterior)
+			terceraAntesDialogo = thirdPerson;
+
+		if (!enDialogo && dialogoAnterior)
+			thirdPerson = terceraAntesDialogo;
+
+		dialogoAnterior = enDialogo;
+
+		float x = 0.0f;
+		float z = 0.0f;
+		if (turno.TomarReposicion(x, z))
+		{
+			playerPosition.x = x;
+			playerPosition.z = z;
+		}
+
+		if (enDialogo)
+		{
+			thirdPerson = false;
+			camara->Yaw = TurnoExtraShift::YawHaciaCliente();
+			camara->Pitch = D3DXToRadian(5.0f);
+		}
+
+		if (turno.BloquearMovimiento())
+		{
+			moveBackForward = 0.0f;
+			moveLeftRight = 0.0f;
+			camYaw = 0.0f;
+			camPitch = 0.0f;
+		}
+
+		if (turno.ConsumirRecogida())
+			pickupRequested = true;
+
+		// Cielo de noche al terminar el turno (y de dia al reintentar).
+		if (turno.EsNoche() != nocheAplicada)
+		{
+			nocheAplicada = turno.EsNoche();
+			skydome->ReemplazarTextura(nocheAplicada
+				? L"Assets/stars_sky.hdr"
+				: L"Assets/hdr_day.hdr");
+		}
+
+		ySueloCliente = AlturaSueloJugador(
+			TurnoExtraShift::ClienteX,
+			TurnoExtraShift::ClienteZ,
+			playerPosition.y + 1.0f);
+	}
+
+	void ReiniciarJuego()
+	{
+		turno.Reiniciar();
+		playerPosition = inicioJugador;
+		thirdPerson = true;
+		terceraAntesDialogo = true;
+		dialogoAnterior = false;
+		camara->Yaw = 0.0f;
+		camara->Pitch = 0.0f;
+		pickupRequested = false;
+		pickupPlaying = false;
+	}
+
+	// Rehace los billboards de los productos cuando cambian y los mueve
+	// cada frame (cayendo del estante o en la mano del jugador).
+	void ActualizarProductosCaidos()
+	{
+		if (productosCaidos == nullptr)
+			return;
+
+		const int total = TurnoExtraShift::MaximoObjetos();
+
+		if (turno.GeneracionObjetos() != generacionProductos)
+		{
+			generacionProductos = turno.GeneracionObjetos();
+			productosCaidos->Vaciar();
+
+			for (int i = 0; i < total && i < 3; ++i)
+			{
+				billboardDeProducto[i] = -1;
+
+				float x, z, caida;
+				bool enMano;
+				int estante;
+
+				if (!turno.ObjetoActivo(i, x, z, caida, enMano, estante))
+					continue;
+
+				if (productosCaidos->AgregarConAspecto(
+						turno.TexturaEstante(estante), x, z, playerPosition.y, 1.2f))
+				{
+					billboardDeProducto[i] = (int)productosCaidos->Cantidad() - 1;
+				}
+			}
+		}
+
+		for (int i = 0; i < total && i < 3; ++i)
+		{
+			if (billboardDeProducto[i] < 0)
+				continue;
+
+			float x, z, caida;
+			bool enMano;
+			int estante;
+
+			if (!turno.ObjetoActivo(i, x, z, caida, enMano, estante))
+				continue;
+
+			const float suelo = playerPosition.y;
+			float y = suelo + (1.0f - caida) * 3.0f;
+
+			if (enMano)
+			{
+				// Frente al jugador, a la altura de las manos.
+				x += sinf(camara->Yaw) * 1.5f;
+				z += cosf(camara->Yaw) * 1.5f;
+				y = suelo + 2.0f;
+			}
+
+			productosCaidos->Mover((size_t)billboardDeProducto[i], x, z, y);
+		}
+	}
+
+	// ---- HUD ------------------------------------------------------------
+
+	void DibujarHud()
+	{
+		UINT totalViewports = 1;
+		D3D11_VIEWPORT vp;
+		d3dContext->RSGetViewports(&totalViewports, &vp);
+		if (totalViewports == 0 || vp.Width <= 0.0f || vp.Height <= 0.0f)
+			return;
+
+		// Las texturas del HUD estan pensadas para 1920x1080.
+		const float sx = vp.Width / 1920.0f;
+		const float sy = vp.Height / 1080.0f;
+		const float s = sx < sy ? sx : sy;
+		float esc = 2.0f * s;
+		if (esc < 1.0f)
+			esc = 1.0f;
+
+		if (turno.JuegoTerminado())
+		{
+			DibujarPantallaFinal(vp.Width, vp.Height, s);
+			return;
+		}
+
+		char buffer[1024];
+
+		// Barra de vida: marco + relleno que baja de golpe desde arriba.
+		const float u = 1.0f / 1920.0f;
+		const float v = 1.0f / 1080.0f;
+
+		hud.Dibujar(HudBarra,
+			1428.0f * sx, 194.0f * sy, 98.0f * sx, 510.0f * sy,
+			1428.0f * u, 194.0f * v, 1526.0f * u, 704.0f * v);
+
+		float fraccion = turno.Vida() / TurnoExtraShift::VidaMaxima;
+		if (fraccion < 0.0f) fraccion = 0.0f;
+		if (fraccion > 1.0f) fraccion = 1.0f;
+
+		const float arriba = 203.0f;
+		const float abajo = 700.0f;
+		const float tope = abajo - (abajo - arriba) * fraccion;
+
+		if (fraccion > 0.0f)
+		{
+			hud.Dibujar(HudBarraRelleno,
+				1434.0f * sx, tope * sy, 85.0f * sx, (abajo - tope) * sy,
+				1434.0f * u, tope * v, 1519.0f * u, abajo * v);
+		}
+
+		// Dinero arriba de la barra.
+		textoPantalla.Dibujar(turno.Estado(), 1400.0f * sx, 130.0f * sy, esc, true, 1.0f, 0.95f, 0.55f);
+
+		// Aviso del turno (arriba, o justo encima del cuadro de dialogo).
+		const bool urgente = turno.CuentaRegresivaActiva() && turno.SegundosRestantes() <= 7;
+		const float yAviso = turno.EnDialogo() ? 630.0f * sy : 110.0f * sy;
+		TextoPantalla::Envolver(turno.Aviso(), 1300.0f * sx, esc, buffer, sizeof(buffer));
+		textoPantalla.Dibujar(buffer, 24.0f * sx, yAviso, esc, true,
+			1.0f, urgente ? 0.35f : 1.0f, urgente ? 0.3f : 1.0f);
+
+		if (!turno.EnDialogo())
+			return;
+
+		// Cuadro de dialogo con la linea del cliente.
+		hud.DibujarCompleta(HudFondoDialogo);
+
+		const float tinta[3] = { 0.10f, 0.26f, 0.13f };
+
+		TextoPantalla::Envolver(turno.LineaCliente(), 1340.0f * sx, esc, buffer, sizeof(buffer));
+		textoPantalla.Dibujar(buffer, 280.0f * sx, 728.0f * sy, esc, false, tinta[0], tinta[1], tinta[2]);
+
+		// 3 respuestas: primero las normales, al final la seleccionada
+		// (su marco es un poco mas grande y se encima).
+		const int seleccion = turno.Seleccion();
+
+		for (int pasada = 0; pasada < 2; ++pasada)
+		{
+			for (int slot = 0; slot < 3; ++slot)
+			{
+				const bool marcada = slot == seleccion;
+				if ((pasada == 0) == marcada)
+					continue;
+
+				const float filaY = 780.0f + slot * 84.0f;
+
+				if (marcada)
+				{
+					hud.Dibujar(HudSeleccionado,
+						264.0f * sx, (filaY - 5.0f) * sy, 1236.0f * sx, 90.0f * sy,
+						264.0f * u, 914.0f * v, 1500.0f * u, 1004.0f * v);
+
+					// Triangulo del cursor a la derecha de la opcion.
+					hud.Dibujar(HudCursor,
+						1488.0f * sx, (filaY - 2.0f) * sy, 68.0f * sx, 80.0f * sy,
+						1488.0f * u, 922.0f * v, 1556.0f * u, 1002.0f * v);
+				}
+				else
+				{
+					hud.Dibujar(HudRespuesta,
+						266.0f * sx, filaY * sy, 1236.0f * sx, 80.0f * sy,
+						266.0f * u, 744.0f * v, 1502.0f * u, 824.0f * v);
+				}
+
+				const int lineas = TextoPantalla::Envolver(
+					turno.Opcion(slot), 1160.0f * sx, esc, buffer, sizeof(buffer));
+
+				const float altoTexto = lineas * TextoPantalla::AltoLinea(esc);
+				const float yTexto = (filaY + 5.0f) * sy + (67.0f * sy - altoTexto) * 0.5f;
+
+				textoPantalla.Dibujar(buffer, 296.0f * sx, yTexto, esc, false,
+					tinta[0], tinta[1], tinta[2]);
+			}
+		}
+	}
+
+	void DibujarPantallaFinal(float ancho, float alto, float s)
+	{
+		const float sombra[4] = { 0.0f, 0.0f, 0.0f, 0.78f };
+		textoPantalla.DibujarRect(0.0f, 0.0f, ancho, alto, sombra);
+
+		const bool gano = turno.Gano();
+		const char* titulo = gano ? "¡Turno completado!" : "GAME OVER";
+
+		float escTitulo = 8.0f * s;
+		if (escTitulo < 3.0f) escTitulo = 3.0f;
+		float escTexto = 3.0f * s;
+		if (escTexto < 1.5f) escTexto = 1.5f;
+
+		const float anchoTitulo = TextoPantalla::MedirAncho(titulo, escTitulo);
+		textoPantalla.Dibujar(titulo, (ancho - anchoTitulo) * 0.5f, alto * 0.28f, escTitulo, false,
+			gano ? 0.55f : 1.0f, gano ? 1.0f : 0.3f, gano ? 0.6f : 0.3f);
+
+		char detalle[512];
+		if (gano)
+			sprintf_s(detalle, "Juntaste $%.0f, compraste la pieza averiada y despegaste. ¡Ganaste!", turno.Pesos());
+		else
+			sprintf_s(detalle, "%s", turno.Motivo());
+
+		char envuelto[1024];
+		TextoPantalla::Envolver(detalle, ancho * 0.7f, escTexto, envuelto, sizeof(envuelto));
+		const float anchoDetalle = TextoPantalla::MedirAncho(envuelto, escTexto);
+		textoPantalla.Dibujar(envuelto, (ancho - anchoDetalle) * 0.5f, alto * 0.46f, escTexto, false);
+
+		const char* reintentar = gano ? "Pulsa R para jugar otra vez" : "Pulsa R para reintentar";
+		const float anchoReintentar = TextoPantalla::MedirAncho(reintentar, escTexto);
+		textoPantalla.Dibujar(reintentar, (ancho - anchoReintentar) * 0.5f, alto * 0.68f, escTexto, true,
+			1.0f, 0.95f, 0.55f);
 	}
 	// Altura del suelo en una posiciones: el terreno o, si hay un piso
 	// registrado mas alto, la cara superior de ese piso.
@@ -955,6 +1404,22 @@ public:
 			true,
 			false,
 			"entrada_izq");
+
+		// puerta: tapa el hueco entre entrada_der y entrada_izq.
+		// Empieza abierta; TurnoExtraShift la cierra durante el turno.
+		indicePuerta = colisiones.cajas.size();
+		oxxo->AgregarCajaLocal(colisiones,
+			D3DXVECTOR3(-2.0f, 0.0f, 19.0f),
+			D3DXVECTOR3(3.0f, 6.0f, 20.0f),
+			terreno->Superficie(-35, 25) + 1.0f,
+			0.0f,
+			'A',
+			1.0f,
+			true,
+			false,
+			"puerta");
+		colisiones.ActivarCaja(indicePuerta, false);
+		puertaCerrada = false;
 
 		// bote de basura izq
 		oxxo->AgregarCajaLocal(colisiones,
