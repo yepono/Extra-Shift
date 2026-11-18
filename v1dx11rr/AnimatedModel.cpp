@@ -222,6 +222,8 @@ struct VSOutput
     float4 position : SV_POSITION;
     float2 uv : TEXCOORD0;
     float3 normal : TEXCOORD1;
+    float3 viewPos : TEXCOORD2;      // espacio de camara (especular)
+    float3 viewNormal : TEXCOORD3;
 };
 
 VSOutput VSMain(VSInput input)
@@ -265,6 +267,8 @@ VSOutput VSMain(VSInput input)
     float4 worldPosition = mul(localPosition, worldMatrix);
     output.position = mul(mul(worldPosition, viewMatrix), projectionMatrix);
     output.normal = normalize(mul(float4(localNormal, 0.0f), worldMatrix).xyz);
+    output.viewPos = mul(worldPosition, viewMatrix).xyz;
+    output.viewNormal = mul(float4(output.normal, 0.0f), viewMatrix).xyz;
     output.uv = input.uv;
 
     return output;
@@ -272,6 +276,13 @@ VSOutput VSMain(VSInput input)
 )";
 
     const char* const pixelShaderSource = R"(
+cbuffer SceneConstants : register(b0)
+{
+    row_major float4x4 worldMatrix;
+    row_major float4x4 viewMatrix;
+    row_major float4x4 projectionMatrix;
+};
+
 Texture2D diffuseTexture : register(t0);
 SamplerState diffuseSampler : register(s0);
 
@@ -280,14 +291,32 @@ struct PSInput
     float4 position : SV_POSITION;
     float2 uv : TEXCOORD0;
     float3 normal : TEXCOORD1;
+    float3 viewPos : TEXCOORD2;
+    float3 viewNormal : TEXCOORD3;
 };
 
+// Iluminacion ambiental + difusa + especular (Blinn-Phong), con la misma
+// luz direccional que Modelo.fx. La especular se calcula en espacio de
+// camara: ahi el ojo esta en el origen.
 float4 PSMain(PSInput input) : SV_TARGET
 {
     float4 albedo = diffuseTexture.Sample(diffuseSampler, input.uv);
-    float lighting = 0.25f + 0.75f * saturate(input.normal.y);
 
-    return float4(albedo.rgb * lighting, albedo.a);
+    float3 luzMundo = normalize(-float3(0.5f, -1.0f, 0.0f));
+    float3 normal = normalize(input.normal);
+
+    float ambiente = 0.25f;
+    float difusa = saturate(dot(normal, luzMundo)) * 0.75f;
+
+    float3 luzVista = normalize(mul(float4(luzMundo, 0.0f), viewMatrix).xyz);
+    float3 normalVista = normalize(input.viewNormal);
+    float3 alOjo = normalize(-input.viewPos);
+    float3 medio = normalize(luzVista + alOjo);
+    float especular = pow(saturate(dot(normalVista, medio)), 32.0f) * 0.35f;
+    especular *= step(0.0f, dot(normal, luzMundo));
+
+    float3 color = albedo.rgb * (ambiente + difusa) + especular;
+    return float4(saturate(color), albedo.a);
 }
 )";
 }
@@ -952,6 +981,7 @@ void AnimatedModel::Draw(
         m_boneConstantBuffer
     };
     m_context->VSSetConstantBuffers(0, 2, constantBuffers);
+    m_context->PSSetConstantBuffers(0, 1, constantBuffers);   // matrices para la especular
 
     m_context->PSSetSamplers(0, 1, &m_sampler);
     m_context->IASetPrimitiveTopology(

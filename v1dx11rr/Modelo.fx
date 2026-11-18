@@ -28,6 +28,13 @@ cbuffer cbChangesOccasionally : register(b4)
 	float specForce;
 };
 
+// Brillo de resaltado: rgb = color, a = intensidad (0 = sin efecto).
+// Se usa para marcar los productos que se cayeron al piso.
+cbuffer cbResaltado : register(b5)
+{
+	float4 resaltado;
+};
+
 struct VS_Input
 {
 	float4 pos : POSITION;
@@ -78,7 +85,7 @@ float4 PS_Main(PS_Input pix) : SV_TARGET
 	float3 reflection;
 	float4 specular;
 	float4 specularMap;
-	float4 finalSpec;
+	float4 finalSpec = float4(0.0, 0.0, 0.0, 0.0);
 
 	textureColor = colorMap.Sample(colorSampler, pix.tex0);
 	color = float4(0.2, 0.2, 0.2, 1);// ambient color
@@ -108,6 +115,16 @@ float4 PS_Main(PS_Input pix) : SV_TARGET
 	color = color * textureColor;
 
 	color = saturate(color + finalSpec);
+
+	// Resaltado: tinte del color + borde brillante (fresnel) que
+	// ilumina la silueta del producto desde cualquier angulo.
+	if (resaltado.a > 0.001)
+	{
+		float borde = pow(1.0 - saturate(abs(dot(normalize(pix.normal), pix.campos))), 2.0);
+		color.rgb = lerp(color.rgb, resaltado.rgb, 0.35 * resaltado.a);
+		color.rgb += resaltado.rgb * (0.35 + 1.6 * borde) * resaltado.a;
+		color = saturate(color);
+	}
 
 	return color;
 }

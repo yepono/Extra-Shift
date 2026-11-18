@@ -38,6 +38,8 @@ struct PS_Input
     float3 tangent        : NORMAL1;
     float3 binorm         : NORMAL2;
     float terrainHeight   : TEXCOORD2;
+    float3 viewPos        : TEXCOORD3;   // posicion en espacio de camara
+    float3 viewNormal     : TEXCOORD4;   // normal en espacio de camara
 };
 
 PS_Input VS_Main(VS_Input vertex)
@@ -54,6 +56,12 @@ PS_Input VS_Main(VS_Input vertex)
     output.normal = normalize(mul(vertex.normal, worldMatrix));
     output.tangent = normalize(mul(vertex.tangente, worldMatrix));
     output.binorm = normalize(mul(vertex.binormal, worldMatrix));
+
+    // Para la luz especular: todo en espacio de camara (la camara
+    // queda en el origen y el vector al ojo es -posicion).
+    float4 worldPos = mul(vertex.pos, worldMatrix);
+    output.viewPos = mul(worldPos, viewMatrix).xyz;
+    output.viewNormal = mul(output.normal, (float3x3)viewMatrix);
 
     // The terrain height is already stored in POSITION.y.
     output.terrainHeight = vertex.pos.y;
@@ -116,5 +124,13 @@ float4 PS_Main(PS_Input input) : SV_TARGET
 
     diffuse = saturate(diffuse + ambient);
 
-    return float4(terrainColor.rgb * diffuse, 1.0f);
+    // Especular (Blinn-Phong) suave: brillo de la luz sobre la arena.
+    float3 luzVista = normalize(mul(-diffuseDirection, (float3x3)viewMatrix));
+    float3 normalVista = normalize(input.viewNormal);
+    float3 alOjo = normalize(-input.viewPos);
+    float3 medio = normalize(luzVista + alOjo);
+    float especular = pow(saturate(dot(normalVista, medio)), 24.0f) * 0.18f;
+    especular *= step(0.0f, dot(normalVista, luzVista));
+
+    return float4(saturate(terrainColor.rgb * diffuse + especular), 1.0f);
 }

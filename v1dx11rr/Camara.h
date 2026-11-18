@@ -223,8 +223,10 @@ public:
 		D3DXVECTOR3 focusPoint = playerPosition;
 		focusPoint.y += height;
 
-		// La canara va detras del jugador
-		Position = focusPoint - lookDirection * distance;
+		// La canara va detras del jugador. Si una pared (caja solida) queda
+		// entre el jugador y la camara, la camara se acerca hasta antes de
+		// la pared, asi nunca la atraviesa.
+		Position = focusPoint - lookDirection * DistanciaLibre(focusPoint, lookDirection, distance);
 
 		// La camara enfoca al jugador.
 		Target = focusPoint;
@@ -235,6 +237,34 @@ public:
 			&Target,
 			&Up
 		);
+	}
+
+	// Avanza desde el jugador hacia atras en pasos cortos y se detiene en
+	// el ultimo punto que no choca con ninguna caja solida.
+	float DistanciaLibre(
+		const D3DXVECTOR3& foco,
+		const D3DXVECTOR3& direccion,
+		float distancia) const
+	{
+		if (colision == nullptr)
+			return distancia;
+
+		const float radioCamara = 0.3f;
+		const float paso = 0.2f;
+		float libre = paso;
+
+		for (float d = paso; d <= distancia; d += paso)
+		{
+			const D3DXVECTOR3 punto = foco - direccion * d;
+			const D3DXVECTOR3 pie(punto.x, punto.y - radioCamara, punto.z);
+
+			if (colision->Solapa(pie, radioCamara, radioCamara * 2.0f))
+				break;
+
+			libre = d;
+		}
+
+		return libre;
 	}
 
 	void ConfigurarColision(SistemaColision* sistema, float radio, float altura)

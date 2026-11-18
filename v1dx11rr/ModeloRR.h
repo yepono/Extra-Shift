@@ -60,6 +60,11 @@ private:
 	ID3D11Buffer* specForceCB;
 	float specForce;
 
+	// Brillo para resaltar el modelo (rgb = color, a = intensidad 0..1).
+	// Lo usa el turno para marcar los productos que se cayeron.
+	ID3D11Buffer* resaltadoCB = nullptr;
+	D3DXVECTOR4 resaltado = D3DXVECTOR4(0.0f, 0.0f, 0.0f, 0.0f);
+
 	int ancho, alto;
 	int anchoTexTerr, altoTexTerr;
 	float anchof, altof;
@@ -108,6 +113,12 @@ public:
 	
 	float getPosZ() {
 		return this->posZ;
+	}
+
+	// Resalta el modelo con un brillo de color (intensidad 0 = normal).
+	void SetResaltado(float r, float g, float b, float intensidad)
+	{
+		resaltado = D3DXVECTOR4(r, g, b, intensidad);
 	}
 
 	void SetPosicion(float x, float z)
@@ -367,7 +378,7 @@ public:
 
 		if (FAILED(d3dResult))
 		{
-			MessageBox(0, L"Error", L"Error al crear vertex buffer", MB_OK);
+			OutputDebugStringW(L"Error al crear vertex buffer\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
 	
@@ -433,6 +444,9 @@ public:
 
 		d3dResult = d3dDevice->CreateBuffer(&constDesc, 0, &specForceCB);
 
+		if (SUCCEEDED(d3dResult))
+			d3dResult = d3dDevice->CreateBuffer(&constDesc, 0, &resaltadoCB);
+
 		if (FAILED(d3dResult))
 		{
 			return false;
@@ -482,6 +496,9 @@ public:
 			cameraPosCB->Release();
 		if (specForceCB)
 			specForceCB->Release();
+		if (resaltadoCB)
+			resaltadoCB->Release();
+		resaltadoCB = nullptr;
 		
 
 		colorMapSampler = 0;
@@ -565,6 +582,8 @@ public:
 		d3dContext->VSSetConstantBuffers(2, 1, &projCB);
 		d3dContext->VSSetConstantBuffers(3, 1, &cameraPosCB);
 		d3dContext->VSSetConstantBuffers(4, 1, &specForceCB);
+		d3dContext->UpdateSubresource(resaltadoCB, 0, 0, &resaltado, 0, 0);
+		d3dContext->PSSetConstantBuffers(5, 1, &resaltadoCB);
 		//cantidad de trabajos
 		
 		d3dContext->Draw(m_ObjParser.m_nVertexCount, 0);

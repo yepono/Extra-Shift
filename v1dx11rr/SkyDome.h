@@ -211,7 +211,7 @@ public:
 
 		if (FAILED(d3dResult))
 		{
-			MessageBox(0, L"Error", L"Error al crear vertex buffer", MB_OK);
+			OutputDebugStringW(L"Error al crear vertex buffer\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
         delete[] vertices;
@@ -221,7 +221,7 @@ public:
 
 		if (!CargarTextura(diffuseTex, &textura, texturaHDR))
 		{
-			MessageBox(0, L"No se pudo cargar la textura del skydome", L"Error", MB_OK);
+			OutputDebugStringW(L"No se pudo cargar la textura del skydome\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
 

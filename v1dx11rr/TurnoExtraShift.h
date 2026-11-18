@@ -43,8 +43,10 @@ public:
 	static constexpr float PuestoZ = 30.0f;
 	static constexpr float ClienteX = -49.0f;    // el cliente, frente al mostrador
 	static constexpr float ClienteZ = 30.0f;
+	// Nave flotando atras del Oxxo, pasando la barda trasera (z = -5).
 	static constexpr float NaveX = -35.0f;
-	static constexpr float NaveZ = 62.0f;
+	static constexpr float NaveZ = -16.0f;
+	static constexpr float DuracionAbduccion = 2.6f;
 
 	TurnoExtraShift()
 	{
@@ -67,12 +69,16 @@ public:
 		ticket = 0.0f;
 		clienteMolesto = false;
 		llevando = -1;
-		generacion++;
 		pedirReposicion = false;
 		pedirRecogida = false;
+		naveReparada = false;
 
 		for (int i = 0; i < MaxObjetos; ++i)
 			objetos[i].activo = false;
+
+		// Los estantes registrados se conservan; solo se vuelven a llenar.
+		for (int i = 0; i < totalEspacios; ++i)
+			espacios[i].enEstante = true;
 
 		for (int i = 0; i < 3; ++i)
 		{
@@ -171,7 +177,10 @@ public:
 			else
 			{
 				if (opcion >= 1 && opcion <= 3)
+				{
 					seleccion = opcion - 1;
+					sonidoClick = true;
+				}
 
 				if (confirmar && seleccion >= 0)
 					Responder(seleccion);
@@ -201,11 +210,12 @@ public:
 			{
 				if (llevando >= 0)
 				{
-					const Estante& estante = Estantes()[objetos[llevando].estante];
+					const EspacioProducto& e = espacios[objetos[llevando].espacio];
+					const Estante& estante = estantes[e.estante];
 					sprintf_s(
 						aviso,
 						"Llevas %s. Devuélvelo a su estante (X %.0f, Z %.0f) y pulsa E. Quedan %d s.",
-						estante.nombre,
+						e.c.nombre,
 						estante.x,
 						estante.z,
 						SegundosRestantes());
@@ -225,27 +235,57 @@ public:
 		case Fase::Noche:
 			if (Distancia(jugadorX, jugadorZ, NaveX, NaveZ) <= RadioNave)
 			{
-				if (interactuar)
+				if (!naveReparada)
 				{
-					if (pesos >= MetaPesos)
+					if (interactuar)
 					{
-						fase = Fase::Victoria;
-						sprintf_s(aviso, "Abordaste la nave y compraste la pieza.");
+						if (pesos >= MetaPesos)
+						{
+							pesos -= MetaPesos;
+							naveReparada = true;
+							sprintf_s(aviso, "¡Nave reparada! Te sobraron $%.0f. Pulsa E para subir.", pesos);
+						}
+						else
+						{
+							Perder("No juntaste los 600 pesos para la pieza averiada. Te quedaste varado en la Tierra.");
+						}
 					}
 					else
 					{
-						Perder("No juntaste los 600 pesos para la pieza averiada. Te quedaste varado en la Tierra.");
+						sprintf_s(aviso, "Tu nave está averiada. ¿Repararla con $%.0f? Pulsa E (tienes $%.0f).", MetaPesos, pesos);
 					}
+				}
+				else if (interactuar)
+				{
+					fase = Fase::Abduccion;
+					timer = 0.0f;
+					sprintf_s(aviso, "La nave te está subiendo...");
 				}
 				else
 				{
-					sprintf_s(aviso, "Estás junto a tu nave. Pulsa E para abordarla.");
+					sprintf_s(aviso, "La nave está lista. Pulsa E para subir.");
 				}
+			}
+			else if (naveReparada)
+			{
+				sprintf_s(aviso, "La nave está lista. Vuelve debajo de ella y pulsa E para subir.");
 			}
 			else
 			{
-				sprintf_s(aviso, "Ya es de noche. Sal del Oxxo y aborda tu nave, frente a la puerta.");
+				sprintf_s(aviso, "Ya es de noche. Sal del Oxxo: tu nave flota atrás de la tienda.");
 			}
+			break;
+
+		case Fase::Abduccion:
+			timer += dt;
+			if (timer >= DuracionAbduccion)
+			{
+				fase = Fase::Volando;
+				sprintf_s(aviso, "Sube con ESPACIO hasta salir de la atmósfera. W/S/A/D moverte, SHIFT bajar.");
+			}
+			break;
+
+		case Fase::Volando:
 			break;
 
 		case Fase::Victoria:
@@ -266,8 +306,57 @@ public:
 	}
 
 	bool ForzarPrimeraPersona() const { return fase == Fase::Dialogo; }
-	bool BloquearMovimiento() const { return fase == Fase::Dialogo || JuegoTerminado(); }
-	bool EsNoche() const { return fase == Fase::Noche || fase == Fase::Victoria; }
+	bool BloquearMovimiento() const
+	{
+		return fase == Fase::Dialogo || fase == Fase::Abduccion || JuegoTerminado();
+	}
+	bool EsNoche() const
+	{
+		return fase == Fase::Noche || fase == Fase::Abduccion ||
+			fase == Fase::Volando || fase == Fase::Victoria;
+	}
+
+	// ---- Nave ----
+	bool NaveReparada() const { return naveReparada; }
+	bool Abduciendo() const { return fase == Fase::Abduccion; }
+	bool Volando() const { return fase == Fase::Volando; }
+
+	// 0..1 durante la abduccion (el alien sube hacia la nave).
+	float ProgresoAbduccion() const
+	{
+		if (fase != Fase::Abduccion)
+			return fase == Fase::Volando ? 1.0f : 0.0f;
+
+		const float p = timer / DuracionAbduccion;
+		return p > 1.0f ? 1.0f : p;
+	}
+
+	// Texto de avance mientras vuela (cuanto falta subir para escapar).
+	void ProgresoVuelo(float subido, float meta)
+	{
+		if (fase != Fase::Volando)
+			return;
+
+		int porcentaje = (int)(subido / meta * 100.0f);
+		if (porcentaje < 0) porcentaje = 0;
+		if (porcentaje > 100) porcentaje = 100;
+
+		sprintf_s(aviso, "Sube con ESPACIO para escapar de la Tierra: %d%%. W/S/A/D moverte, SHIFT bajar.", porcentaje);
+	}
+
+	// Sonidos que DXRR debe tocar (se consumen al leerlos).
+	bool ConsumirSonidoClick() { const bool s = sonidoClick; sonidoClick = false; return s; }
+	bool ConsumirSonidoIncorrecto() { const bool s = sonidoIncorrecto; sonidoIncorrecto = false; return s; }
+
+	// DXRR avisa cuando la nave subio lo suficiente.
+	void Escapar()
+	{
+		if (fase != Fase::Volando)
+			return;
+
+		fase = Fase::Victoria;
+		sprintf_s(aviso, "Escapaste de la Tierra.");
+	}
 	bool EnDialogo() const { return fase == Fase::Dialogo; }
 	bool JuegoTerminado() const { return fase == Fase::Victoria || fase == Fase::Derrota; }
 	bool Gano() const { return fase == Fase::Victoria; }
@@ -322,36 +411,127 @@ public:
 		return true;
 	}
 
-	// Cambia cada vez que aparecen o desaparecen productos del piso.
-	int GeneracionObjetos() const { return generacion; }
+	// ---- Estantes y productos (los registra DXRR al cargar la escena) ---
+
+	// Registra una estanteria (centro en X/Z). Devuelve su indice o -1.
+	int AgregarEstante(float x, float z)
+	{
+		if (totalEstantes >= MaxEstantes)
+			return -1;
+
+		estantes[totalEstantes].x = x;
+		estantes[totalEstantes].z = z;
+		return totalEstantes++;
+	}
+
+	// Como esta acomodado un producto en su estanteria.
+	struct Colocacion
+	{
+		int tipo = 0;              // modelo que dibuja DXRR
+		float x = 0.0f, y = 0.0f, z = 0.0f;
+		float escala = 1.0f;       // factor extra (repisas mas bajas)
+		float giroY = 0.0f;        // radianes, para que la etiqueta de al pasillo
+		float caidaX = 0.0f;       // hacia donde cae; (0,0) = adelante o atras en Z
+		float caidaZ = 0.0f;
+		const char* nombre = "";   // para los avisos
+	};
+
+	int AgregarEspacio(int estante, const Colocacion& c)
+	{
+		if (totalEspacios >= MaxEspacios || estante < 0 || estante >= totalEstantes)
+			return -1;
+
+		EspacioProducto& e = espacios[totalEspacios];
+		e.estante = estante;
+		e.c = c;
+		e.enEstante = true;
+		return totalEspacios++;
+	}
+
+	int TotalEspacios() const { return totalEspacios; }
+
+	// nullptr si el producto se cayo (su hueco queda vacio).
+	const Colocacion* EspacioEnEstante(int i) const
+	{
+		if (i < 0 || i >= totalEspacios || !espacios[i].enEstante)
+			return nullptr;
+
+		return &espacios[i].c;
+	}
+
 	static int MaximoObjetos() { return MaxObjetos; }
 
-	// Devuelve false si ese hueco no tiene un producto activo.
-	bool ObjetoActivo(
-		int indice,
-		float& x,
-		float& z,
-		float& caida,
-		bool& enMano,
-		int& estante) const
+	// Producto fuera de la estanteria: cayendo, en el piso o en la mano.
+	// `c` sale con la posicion actual en X/Z (y = altura del estante);
+	// caida va de 0 (en el estante) a 1 (ya en el piso).
+	bool ObjetoActivo(int indice, Colocacion& c, float& caida, bool& enMano) const
 	{
 		if (indice < 0 || indice >= MaxObjetos || !objetos[indice].activo)
 			return false;
 
-		x = objetos[indice].x;
-		z = objetos[indice].z;
-		caida = objetos[indice].caida;
-		enMano = objetos[indice].enMano;
-		estante = objetos[indice].estante;
+		const ObjetoSuelo& o = objetos[indice];
+		const EspacioProducto& e = espacios[o.espacio];
+
+		c = e.c;
+		caida = o.caida;
+		enMano = o.enMano;
+
+		if (enMano)
+		{
+			c.x = o.x;
+			c.z = o.z;
+			return true;
+		}
+
+		// Sale del estante y cae hacia el pasillo.
+		c.x = e.c.x + (o.x - e.c.x) * caida;
+		c.z = e.c.z + (o.z - e.c.z) * caida;
 		return true;
 	}
 
-	const WCHAR* TexturaEstante(int estante) const
+	// ---- Ticket del cliente (billboard durante la platica) -------------
+	struct RenglonTicket
 	{
-		if (estante < 0 || estante >= TotalEstantes)
-			estante = 0;
+		const char* nombre;
+		int cantidad;
+		float precio;   // unitario, en pesos
+	};
 
-		return Estantes()[estante].textura;
+	// Renglones visibles ahora: lo que el cliente trae + lo que agrego
+	// por las respuestas humanas.
+	int RenglonesTicket(RenglonTicket* salida, int maximo, float& total) const
+	{
+		total = 0.0f;
+		int n = 0;
+		const ArticuloGuion* articulos = Articulos(IndiceCliente());
+
+		for (int i = 0; i < MaxArticulos && n < maximo; ++i)
+		{
+			const ArticuloGuion& a = articulos[i];
+			if (a.nombre == nullptr || !articuloEnTicket[i])
+				continue;
+
+			salida[n].nombre = a.nombre;
+			salida[n].cantidad = a.cantidad;
+			salida[n].precio = a.precio;
+			total += a.cantidad * a.precio;
+			++n;
+		}
+
+		return n;
+	}
+
+	// Estanteria a la que hay que devolver lo que trae el jugador
+	// (false si no carga nada).
+	bool DestinoActual(float& x, float& z) const
+	{
+		if (llevando < 0)
+			return false;
+
+		const Estante& estante = estantes[espacios[objetos[llevando].espacio].estante];
+		x = estante.x;
+		z = estante.z;
+		return true;
 	}
 
 	const char* Aviso() const { return aviso; }
@@ -395,6 +575,8 @@ private:
 		Dialogo,
 		Limpieza,
 		Noche,
+		Abduccion,
+		Volando,
 		Victoria,
 		Derrota
 	};
@@ -417,17 +599,87 @@ private:
 
 	struct Estante
 	{
-		float x;
-		float z;
-		const WCHAR* textura;
-		const char* nombre;
+		float x = 0.0f;
+		float z = 0.0f;
 	};
 
+	struct EspacioProducto
+	{
+		int estante = 0;
+		Colocacion c;
+		bool enEstante = true;
+	};
+
+	// Lo que compra cada cliente. linea = -1: lo trae desde el inicio;
+	// linea >= 0: lo agrega si contestas humano en esa pregunta (y no
+	// lo hiciste enojar antes). Los totales cuadran con el guion:
+	// vecino 45, senora 99, sujeto 32 (sin extras).
+	struct ArticuloGuion
+	{
+		const char* nombre;
+		int cantidad;
+		float precio;
+		int linea;
+	};
+
+	static const int MaxArticulos = 5;
+
+	static const ArticuloGuion* Articulos(int cliente)
+	{
+		static const ArticuloGuion articulos[3][MaxArticulos] =
+		{
+			{
+				{ "Coca-Cola 600ml", 1, 22.0f, -1 },
+				{ "Doritos Nacho", 1, 23.0f, -1 },
+				{ "Chicles Trident", 1, 15.0f, 3 },   // "¿algo más?"
+				{ nullptr, 0, 0.0f, 0 },
+				{ nullptr, 0, 0.0f, 0 },
+			},
+			{
+				{ "Atún en agua", 3, 21.0f, -1 },
+				{ "Alimento gato", 2, 18.0f, -1 },
+				{ "Leche 1 L", 1, 28.0f, 2 },
+				{ "Redondeo", 1, 0.50f, 3 },        // dona los centavos
+				{ nullptr, 0, 0.0f, 0 },
+			},
+			{
+				{ "Café americano", 1, 20.0f, -1 },
+				{ "Encendedor", 1, 12.0f, -1 },
+				{ "Gansito", 1, 18.0f, 3 },
+				{ nullptr, 0, 0.0f, 0 },
+				{ nullptr, 0, 0.0f, 0 },
+			},
+		};
+
+		if (cliente < 0) cliente = 0;
+		if (cliente > 2) cliente = 2;
+		return articulos[cliente];
+	}
+
+	void PrepararTicket()
+	{
+		const ArticuloGuion* articulos = Articulos(IndiceCliente());
+		for (int i = 0; i < MaxArticulos; ++i)
+			articuloEnTicket[i] = articulos[i].nombre != nullptr && articulos[i].linea < 0;
+	}
+
+	// Respuesta humana en la linea actual: el cliente agrega sus extras.
+	void AgregarExtrasTicket()
+	{
+		const ArticuloGuion* articulos = Articulos(IndiceCliente());
+		for (int i = 0; i < MaxArticulos; ++i)
+		{
+			if (articulos[i].nombre != nullptr && articulos[i].linea == linea)
+				articuloEnTicket[i] = true;
+		}
+	}
+
+	// x/z: donde queda en el piso (o la mano del jugador si enMano).
 	struct ObjetoSuelo
 	{
 		bool activo = false;
 		bool enMano = false;
-		int estante = 0;
+		int espacio = 0;
 		float x = 0.0f;
 		float z = 0.0f;
 		float caida = 0.0f;
@@ -594,21 +846,6 @@ private:
 		return guion;
 	}
 
-	static const Estante* Estantes()
-	{
-		static const Estante estantes[TotalEstantes] =
-		{
-			{ -20.0f, 35.0f, L"Assets/Billboards/cokita.png", "la Cokita" },
-			{ -24.0f, 35.0f, L"Assets/Billboards/doritos.png", "los Doritos" },
-			{ -28.0f, 35.0f, L"Assets/Billboards/boing.png", "el Boing" },
-			{ -32.0f, 30.0f, L"Assets/Billboards/oreo.png", "las Oreo" },
-			{ -36.0f, 30.0f, L"Assets/Billboards/nutri.png", "el Nutri" },
-			{ -38.0f, 25.0f, L"Assets/Billboards/hersheys.png", "el Hershey's" },
-		};
-
-		return estantes;
-	}
-
 	// Corre el reloj de 20 s. Devuelve false si el jugador murio.
 	bool ContarEspera(float dt)
 	{
@@ -654,6 +891,7 @@ private:
 		ticket = 0.0f;
 		clienteMolesto = false;
 		pedirReposicion = true;
+		PrepararTicket();
 		PrepararLinea();
 	}
 
@@ -673,6 +911,7 @@ private:
 			if (!clienteMolesto)
 			{
 				ticket += PagoHumano;
+				AgregarExtrasTicket();
 				sprintf_s(aviso, "Respuesta humana. El cliente sigue comprando (+%.0f pesos).", PagoHumano);
 			}
 			else
@@ -682,6 +921,7 @@ private:
 		}
 		else if (tipo == Rara)
 		{
+			sonidoIncorrecto = true;
 			Danar(DanoRaro);
 
 			if (!clienteMolesto)
@@ -696,6 +936,7 @@ private:
 		}
 		else
 		{
+			sonidoIncorrecto = true;
 			Danar(DanoAlien);
 			clienteMolesto = true;
 			sprintf_s(aviso, "¡Respuesta alienígena! (-%.0f vida). El cliente ya no quiere comprar nada más.", DanoAlien);
@@ -764,7 +1005,7 @@ private:
 		const ClienteGuion& guion = Guion()[IndiceCliente()];
 		const LineaGuion& actual = guion.lineas[linea];
 
-		sprintf_s(lineaVisible, "%s: %s", guion.nombre, actual.cliente);
+		sprintf_s(lineaVisible, "%s", actual.cliente);   // solo lo que dice, sin su nombre
 
 		for (int slot = 0; slot < 3; ++slot)
 			sprintf_s(opcionVisible[slot], "%d. %s", slot + 1, actual.opciones[orden[slot]]);
@@ -772,6 +1013,13 @@ private:
 		sprintf_s(aviso, "Elige con 1, 2 o 3 y confirma con ENTER o E.  (Pregunta %d de 5)", linea + 1);
 	}
 
+	static float Aleatorio(float minimo, float maximo)
+	{
+		return minimo + (maximo - minimo) * ((float)rand() / (float)RAND_MAX);
+	}
+
+	// Tira 2 o 3 productos distintos de las estanterias: dejan su hueco
+	// vacio y caen al pasillo de enfrente o de atras.
 	void SoltarObjetos()
 	{
 		llevando = -1;
@@ -779,62 +1027,86 @@ private:
 		for (int i = 0; i < MaxObjetos; ++i)
 			objetos[i].activo = false;
 
+		if (totalEspacios == 0)
+			return;
+
 		const int cantidad = 2 + (rand() % 2);
-		bool usado[TotalEstantes] = {};
 		int creados = 0;
 		int guardia = 0;
 
-		while (creados < cantidad && guardia < 60)
+		while (creados < cantidad && guardia < 200)
 		{
-			const int estante = rand() % TotalEstantes;
 			guardia++;
+			const int espacio = rand() % totalEspacios;
+			EspacioProducto& e = espacios[espacio];
 
-			if (usado[estante])
+			if (!e.enEstante)
 				continue;
 
-			usado[estante] = true;
+			e.enEstante = false;
+
+			// Direccion de caida: la del espacio (lado del pasillo) o,
+			// si es una repisa abierta, adelante o atras al azar.
+			float dirX = e.c.caidaX;
+			float dirZ = e.c.caidaZ;
+			if (dirX == 0.0f && dirZ == 0.0f)
+				dirZ = (rand() % 2) ? 1.0f : -1.0f;
+
+			const float distancia = Aleatorio(DistanciaCaida - 0.4f, DistanciaCaida + 0.4f);
+			const float lateral = Aleatorio(-0.8f, 0.8f);
 
 			ObjetoSuelo& objeto = objetos[creados];
 			objeto.activo = true;
 			objeto.enMano = false;
-			objeto.estante = estante;
+			objeto.espacio = espacio;
 			objeto.caida = 0.0f;
-			objeto.x = Estantes()[estante].x;
-			objeto.z = Estantes()[estante].z - 2.5f;
+			objeto.x = e.c.x + dirX * distancia - dirZ * lateral;
+			objeto.z = e.c.z + dirZ * distancia + dirX * lateral;
 			creados++;
 		}
+	}
 
-		generacion++;
+	// Estanteria mas cercana al jugador dentro de RadioEstante (o -1).
+	int EstanteCercano(float x, float z) const
+	{
+		int mejor = -1;
+		float mejorDistancia = RadioEstante;
+
+		for (int i = 0; i < totalEstantes; ++i)
+		{
+			const float d = Distancia(x, z, estantes[i].x, estantes[i].z);
+			if (d <= mejorDistancia)
+			{
+				mejorDistancia = d;
+				mejor = i;
+			}
+		}
+
+		return mejor;
 	}
 
 	bool IntentarLimpieza(float jugadorX, float jugadorZ)
 	{
 		if (llevando >= 0)
 		{
-			const int destino = objetos[llevando].estante;
-			const Estante& estante = Estantes()[destino];
+			EspacioProducto& e = espacios[objetos[llevando].espacio];
+			const int cercano = EstanteCercano(jugadorX, jugadorZ);
 
-			if (Distancia(jugadorX, jugadorZ, estante.x, estante.z) <= RadioEstante)
+			if (cercano == e.estante)
 			{
+				e.enEstante = true;
 				objetos[llevando].activo = false;
 				objetos[llevando].enMano = false;
 				llevando = -1;
-				generacion++;
 				espera = 0.0f; // devolver un producto cuenta como atender
-				sprintf_s(aviso, "Producto devuelto a su estante.");
+				sprintf_s(aviso, "Devolviste %s a su estante.", e.c.nombre);
 				return true;
 			}
 
-			for (int i = 0; i < TotalEstantes; ++i)
+			if (cercano >= 0)
 			{
-				if (i == destino)
-					continue;
-
-				if (Distancia(jugadorX, jugadorZ, Estantes()[i].x, Estantes()[i].z) <= RadioEstante)
-				{
-					sprintf_s(aviso, "Ese no es su estante. Busca las coordenadas del aviso.");
-					return true;
-				}
+				sprintf_s(aviso, "Ese no es su estante. Busca las coordenadas del aviso.");
+				return true;
 			}
 
 			return false;
@@ -845,7 +1117,7 @@ private:
 
 		for (int i = 0; i < MaxObjetos; ++i)
 		{
-			if (!objetos[i].activo || objetos[i].enMano)
+			if (!objetos[i].activo || objetos[i].enMano || objetos[i].caida < 1.0f)
 				continue;
 
 			const float distancia = Distancia(jugadorX, jugadorZ, objetos[i].x, objetos[i].z);
@@ -863,8 +1135,7 @@ private:
 		objetos[mejor].enMano = true;
 		llevando = mejor;
 		pedirRecogida = true;
-		generacion++;
-		sprintf_s(aviso, "Recogiste %s. Llévalo a su estante.", Estantes()[objetos[mejor].estante].nombre);
+		sprintf_s(aviso, "Recogiste %s. Llévalo a su estante.", espacios[objetos[mejor].espacio].c.nombre);
 		return true;
 	}
 
@@ -884,17 +1155,24 @@ private:
 	void RefrescarEstado()
 	{
 		if (fase == Fase::Dialogo)
-			sprintf_s(estado, "$%.0f / %.0f\nTicket: $%.0f", pesos, MetaPesos, ticket);
+			sprintf_s(estado, "$%.0f / %.0f\nGanancia: +$%.0f", pesos, MetaPesos, ticket);
 		else
 			sprintf_s(estado, "$%.0f / %.0f", pesos, MetaPesos);
 	}
 
 	static const int MaxObjetos = 3;
-	static const int TotalEstantes = 6;
+	static const int MaxEstantes = 24;
+	static const int MaxEspacios = 256;
 	static constexpr float RadioCaja = 7.0f;
 	static constexpr float RadioRecoger = 3.0f;
-	static constexpr float RadioEstante = 4.5f;
-	static constexpr float RadioNave = 8.0f;
+	static constexpr float RadioEstante = 3.5f;   // de pie junto al estante
+	static constexpr float DistanciaCaida = 2.4f; // del centro del estante al pasillo
+
+	Estante estantes[MaxEstantes];
+	int totalEstantes = 0;
+	EspacioProducto espacios[MaxEspacios];
+	int totalEspacios = 0;
+	static constexpr float RadioNave = 9.0f;
 
 	Fase fase = Fase::Explorando;
 	int cliente = 0;
@@ -909,10 +1187,13 @@ private:
 	float pesos = 0.0f;
 	float ticket = 0.0f;
 	bool clienteMolesto = false;
+	bool articuloEnTicket[MaxArticulos] = {};
 	int llevando = -1;
-	int generacion = 0;
 	bool pedirReposicion = false;
 	bool pedirRecogida = false;
+	bool naveReparada = false;
+	bool sonidoClick = false;
+	bool sonidoIncorrecto = false;
 
 	ObjetoSuelo objetos[MaxObjetos];
 	char lineaVisible[512];

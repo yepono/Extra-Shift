@@ -103,12 +103,8 @@ public:
 
 		if (!loaded)
 		{
-			MessageBox(
-				nullptr,
-				L"Terrain initialization failed. Check Shader.fx and terrain texture paths.",
-				L"Terrain Error",
-				MB_OK | MB_ICONERROR
-			);
+			// Sin MessageBox (prohibido por la rubrica): se avisa en la consola.
+			OutputDebugStringW(L"Terrain initialization failed. Check Shader.fx and terrain texture paths.\n");
 		}
 	}
 
@@ -279,7 +275,7 @@ public:
 
 		if (FAILED(d3dResult))
 		{
-			MessageBox(0, L"Error", L"Error al crear vertex buffer", MB_OK);
+			OutputDebugStringW(L"Error al crear vertex buffer\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
 		//ya una vez pasados los vertices al buffer borramos el arreglo donde los habiamos creado inicialmente

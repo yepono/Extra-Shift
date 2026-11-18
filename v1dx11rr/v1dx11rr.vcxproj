@@ -195,6 +195,9 @@
     <ClInclude Include="TextoPantalla.h" />
     <ClInclude Include="HudTextura.h" />
     <ClInclude Include="TurnoExtraShift.h" />
+    <ClInclude Include="CharcosAgua.h" />
+    <ClInclude Include="EfectosOvni.h" />
+    <ClInclude Include="Sonidos.h" />
     <ClInclude Include="DXRR.h" />
     <ClInclude Include="FBXImporter.h" />
     <ClInclude Include="GamePadRR.h" />

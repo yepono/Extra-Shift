@@ -17,6 +17,9 @@
 #include "TextoPantalla.h"
 #include "HudTextura.h"
 #include "TurnoExtraShift.h"
+#include "CharcosAgua.h"
+#include "EfectosOvni.h"
+#include "Sonidos.h"
 #include <cstdio>
 
 class DXRR {
@@ -55,7 +58,7 @@ public:
 	PanelRR paneles;
 
 	ModeloRR* chavo3;
-	ModeloRR* alien;
+	//ModeloRR* alien;
 	ModeloRR* chava1;
 	ModeloRR* chava2;
 	ModeloRR* humano;
@@ -106,7 +109,7 @@ public:
 	ModeloRR* oxxo;
 
 	// vehiculo
-	ModeloRR* ovni;
+	ModeloRR* ovni = nullptr;
 
 
 	// FBX alien
@@ -153,24 +156,179 @@ public:
 		HudCursor = 3,            // cursorDialogo
 		HudBarra = 4,             // barra
 		HudBarraRelleno = 5,      // barrabarra
+		HudTicket = 6,            // pantalla (ticket del cliente)
 	};
 	HudTextura hud;
 
-	// Productos tirados en el piso (billboards que se rehacen al cambiar).
-	BillboardRR* productosCaidos = nullptr;
-	int generacionProductos = -1;
-	int billboardDeProducto[3] = { -1, -1, -1 };
+	// Productos 3D de las estanterias: un modelo por variante, que se
+	// dibuja en cada hueco. Escala y centro salen de los limites del .obj.
+	struct TipoProducto
+	{
+		ModeloRR* modelo = nullptr;
+		const char* nombre = "";
+		float escala = 0.0f;
+		float centroX = 0.0f;
+		float centroZ = 0.0f;
+		float base = 0.0f;
+		float baseAcostado = 0.0f;
+	};
+	// Gondolas (repisa-1) en fila a lo largo del pasillo de la entrada, a la
+	// derecha de la puerta: espalda hacia los ventanales (z = 44) y repisas
+	// hacia adentro de la tienda (-Z). Giro medido en el juego: con 0 dan a
+	// +X, con PI a la caja (-X) y con PI/2 hacia -Z.
+	static constexpr float GondolaX[3] = { -18.5f, -23.5f, -28.5f };
+	static constexpr float GondolaZ = 42.3f;
+	static constexpr float GiroGondola = D3DX_PI * 0.5f;
+
+	float AlturaGondola(int i) const
+	{
+		return terreno->Superficie(GondolaX[i], GondolaZ) + 1.0f;
+	}
+
+	// Refri suelto (refri-2): espalda contra la pared de x = -10 y puerta
+	// hacia el interior (-X). Antes tenia un giro de -65 (radianes).
+	static constexpr float RefriSueltoX = -11.6f;
+	static constexpr float RefriSueltoZ = 27.0f;   // +2 para no encimarse con los refris del oxxo
+	static constexpr float GiroRefriSuelto = -D3DX_PI * 0.5f;
+
+	// Carrito afuera del Oxxo, junto al bote de basura de la entrada.
+	// Camara en tercera persona: mas cerca para que las paredes no tapen.
+	static constexpr float DistanciaTercera = 6.0f;   // antes 10
+	static constexpr float AlturaTercera = 2.0f;      // antes 1.5
+
+	static constexpr float CarritoX = -26.0f;
+	static constexpr float CarritoZ = 48.5f;
+	static constexpr float EscalaCarrito = 2.0f;   // del tamano de un carrito real
+
+	// Canastas apiladas adentro, a la izquierda de la puerta (viendo hacia
+	// ella desde adentro). Cada pila: varias canastas encajadas.
+	static constexpr float EscalaCanasta = 0.75f;
+	static constexpr int CanastasPorPila = 6;
+	static constexpr float SeparacionCanastas = 0.22f;   // cuanto sube cada una
+	static constexpr float PilasCanastasX[2] = { -39.6f, -41.2f };
+	static constexpr float PilasCanastasZ = 42.6f;
+
+	// Mueve el modelo para que el centro de su malla quede en (x, z).
+	static void CentrarModelo(ModeloRR* modelo, float x, float z, float escala)
+	{
+		if (modelo == nullptr || !modelo->TieneLimites())
+		{
+			if (modelo != nullptr)
+				modelo->SetPosicion(x, z);
+			return;
+		}
+
+		const D3DXVECTOR3 minimo = modelo->GetMinLocal();
+		const D3DXVECTOR3 maximo = modelo->GetMaxLocal();
+		modelo->SetPosicion(
+			x - (minimo.x + maximo.x) * 0.5f * escala,
+			z - (minimo.z + maximo.z) * 0.5f * escala);
+	}
+
+	float AlturaPisoTienda(float x, float z)
+	{
+		return colisiones.AlturaSuelo(x, z, 100.0f, terreno->Superficie(x, z));
+	}
+
+	void DibujarCanastas(const D3DXMATRIX& vista, const D3DXMATRIX& proyeccion)
+	{
+		if (canasta == nullptr)
+			return;
+
+		const float baseMalla = canasta->TieneLimites() ? -canasta->GetMinLocal().y * EscalaCanasta : 0.0f;
+
+		for (int p = 0; p < 2; ++p)
+		{
+			const float piso = AlturaPisoTienda(PilasCanastasX[p], PilasCanastasZ);
+			CentrarModelo(canasta, PilasCanastasX[p], PilasCanastasZ, EscalaCanasta);
+
+			for (int i = 0; i < CanastasPorPila; ++i)
+			{
+				canasta->Draw(vista, proyeccion,
+					piso + baseMalla + i * SeparacionCanastas,
+					camara->Position, 10.0f, 0, 'A', EscalaCanasta);
+			}
+		}
+	}
+
+	// Una caja solida por pila de canastas.
+	void AgregarCajasCanastas()
+	{
+		if (canasta == nullptr || !canasta->TieneLimites())
+			return;
+
+		const D3DXVECTOR3 minimo = canasta->GetMinLocal();
+		const D3DXVECTOR3 maximo = canasta->GetMaxLocal();
+		const float mitadX = (maximo.x - minimo.x) * 0.5f * EscalaCanasta;
+		const float mitadZ = (maximo.z - minimo.z) * 0.5f * EscalaCanasta;
+		const float alto = (maximo.y - minimo.y) * EscalaCanasta + (CanastasPorPila - 1) * SeparacionCanastas;
+
+		for (int p = 0; p < 2; ++p)
+		{
+			const float x = PilasCanastasX[p];
+			const float z = PilasCanastasZ;
+			const float piso = AlturaPisoTienda(x, z);
+
+			colisiones.AgregarCajaMinMax(
+				D3DXVECTOR3(x - mitadX, piso, z - mitadZ),
+				D3DXVECTOR3(x + mitadX, piso + alto, z + mitadZ),
+				true, false, "canastas");
+		}
+	}
+
+	static const int TotalTiposProducto = 8;
+	static constexpr float AltoProducto = 0.95f;   // cabe entre repisas
+	static constexpr float AnchoProducto = 1.15f;  // 3 por repisa
+	TipoProducto tiposProducto[TotalTiposProducto];
 
 	// Clientes animados frente a la caja: 0 = chava, 1 = chavo (se alternan).
 	AnimatedModel* clientes[2] = { nullptr, nullptr };
 	bool clienteCargado[2] = { false, false };
 	float ySueloCliente = 0.0f;
+	static constexpr float AlturaCliente = 4.4f;
+	float escalaCliente[2] = { 1.0f, 1.0f };
+
+	// Charcos de agua en el piso (shader propio) y reloj para animarlos.
+	CharcosAgua charcos;
+	float tiempoJuego = 0.0f;
+
+	// Nave del alien: flota atras del Oxxo; al final se repara y se maneja.
+	EfectosOvni efectosOvni;
+	SistemaColision colisionesNave;   
+	D3DXVECTOR3 navePos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);   // base de la nave
+	float naveRadio = 6.0f;
+	float naveAltura = 3.0f;
+	float naveBase = 0.0f;
+	bool abduccionIniciada = false;
+	bool vueloIniciado = false;
+	D3DXVECTOR3 inicioAbduccion = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+	float moveUpDown = 0.0f;   // ESPACIO / SHIFT (lo llena ProcessInput)
+	static constexpr float EscalaOvni = 6.5f;
+	static constexpr float AlturaFlote = 6.0f;
+	static constexpr float VelocidadNave = 2.2f;       // veces la del jugador
+	static constexpr float AlturaMaximaNave = 160.0f;
+	static constexpr float LimiteVuelo = 200.0f;        // el terreno llega a 250
+	static constexpr float SubidaParaEscapar = 80.0f;   // altura a subir para ganar
+	static constexpr float AlturaOjoNave = 1.5f;        // camara sobre el casco
+	float alturaDespegue = 0.0f;
+
+	// Sonidos (Assets/Sonido): ambiente del desierto en bucle, click al
+	// elegir opcion, incorrecto al contestar mal y ovni al subir a la nave.
+	Sonidos sonidos;
 
 	// Puerta del Oxxo (caja de colision que se activa durante el turno).
 	size_t indicePuerta = (size_t)-1;
 	bool puertaCerrada = false;
 
 	bool nocheAplicada = false;
+
+	// Exposicion del cielo HDR: la imagen de noche es muy clara, asi que se
+	// baja mucho para que se vea oscura (subir ExposicionNoche = mas claro).
+	static constexpr float ExposicionDia = 1.0f;
+	static constexpr float ExposicionNoche = 0.15f;
+	static constexpr float DuracionTransicionCielo = 1.5f;
+	float exposicionCielo = ExposicionDia;
+	int transicionCielo = 0;   // 0 nada, 1 oscureciendo, 2 aclarando
 	bool dialogoAnterior = false;
 	bool terceraAntesDialogo = true;
 	D3DXVECTOR3 inicioJugador;
@@ -185,7 +343,7 @@ public:
 	// pantalla final.
 	bool CamaraBloqueada() const
 	{
-		return turno.BloquearMovimiento();
+		return turno.BloquearMovimiento() || turno.Volando() || turno.Abduciendo();
 	}
 
 	// Volumen del jugador: radio en XZ y altura en Y.
@@ -224,10 +382,8 @@ public:
 			hud.Cargar(HudCursor, L"Assets/Billboards/cursorDialogo.png");
 			hud.Cargar(HudBarra, L"Assets/Billboards/barra.png");
 			hud.Cargar(HudBarraRelleno, L"Assets/Billboards/barrabarra.png");
+			hud.Cargar(HudTicket, L"Assets/Billboards/pantalla.png");
 		}
-
-		productosCaidos = new BillboardRR();
-		productosCaidos->Inicializar(d3dDevice, d3dContext);
 
 		moveBackForward = 0.0f;
 		moveLeftRight = 0.0f;
@@ -245,10 +401,8 @@ public:
 		paneles.Inicializar(d3dDevice, d3dContext);
 
 
-		// Camera-facing billboard: texture, x, z, y, width.
-		billboard->AgregarConAspecto(
-			L"Assets/Billboards/cokita.png",
-			-26.0f, 4.0f, 20.0f, 1.0f);
+		// Los billboards del escenario se agregan en AgregarBillboards(),
+		// cuando ya existen el terreno y las colisiones.
 
 		// Fixed panel: texture, x, y, z, width, rotation in degrees.
 		//  a sprite that must not turn.
@@ -268,7 +422,7 @@ public:
 
 		// Personajes del escenario
 		chavo3 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chavo3.obj", L"Assets/Modelos/Persona/chavo3.jpeg", L"Assets/Modelos/Persona/chavo3_specular_map.png", -90, 30);
-		alien = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/alien.obj", L"Assets/Modelos/Persona/alien.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -58, 30);
+		//alien = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/alien.obj", L"Assets/Modelos/Persona/alien.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -58, 30);
 		chava1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chava1.obj", L"Assets/Modelos/Persona/chava1.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -15, 15);
 		chava2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/Persona/chava2.obj", L"Assets/Modelos/Persona/chava2.jpeg", L"Assets/Modelos/Persona/alien_specular_map.png", -40, 50);
 
@@ -278,6 +432,9 @@ public:
 		carrito = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/carrito/carrito.obj", L"Assets/Modelos/objetos/carrito/carrito2.png", L"Assets/Modelos/objetos/carrito/carrito1.png", 5, 5);
 		cartel = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/cartel/cartel.obj", L"Assets/Modelos/objetos/cartel/Material_45_baseColor.png", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 7, 7);
 		canasta = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/canasta.obj", L"Assets/Modelos/objetos/canasta.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", 9, 9);
+
+		// El .obj del carrito trae un desfase (x ~22): se centra donde va.
+		CentrarModelo(carrito, CarritoX, CarritoZ, EscalaCarrito);
 
 		refri_a1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-1.obj", L"Assets/Modelos/objetos/refri-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -18, 20);
 		refri_a2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-1.obj", L"Assets/Modelos/objetos/refri-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -22, 20);
@@ -289,12 +446,15 @@ public:
 		refri_a7 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-1.obj", L"Assets/Modelos/objetos/refri-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -44, 20);
 
 
-		refri_b1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-2.obj", L"Assets/Modelos/objetos/refri-2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -13, 25);
+		// Refri suelto: espalda contra la pared de x = -10 y puerta hacia la tienda.
+		refri_b1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/refri-2.obj", L"Assets/Modelos/objetos/refri-2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", RefriSueltoX, RefriSueltoZ);
 
 
-		//repisa_b1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -30, 25);
-		repisa_b2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -17, 40);
-		//repisa_b3 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -36, 35);
+		// Gondolas (repisa-1): la de -17,40 ya existia; se agregan dos mas en
+		// la misma linea. Todas giradas para que den hacia la caja.
+		repisa_b1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", GondolaX[1], GondolaZ);
+		repisa_b2 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", GondolaX[0], GondolaZ);
+		repisa_b3 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", GondolaX[2], GondolaZ);
 		//repisa_b4 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-1.obj", L"Assets/Modelos/objetos/repisa-1.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -39, 35);
 
 		repisa_a1 = new ModeloRR(d3dDevice, d3dContext, "Assets/Modelos/objetos/repisa-2.obj", L"Assets/Modelos/objetos/repisa-2.jpeg", L"Assets/Modelos/objetos/cartel/Material_45_normal.png", -20, 35);
@@ -389,6 +549,13 @@ public:
 					continue;
 				}
 
+				// Escala para que mida AlturaCliente (como una persona).
+				{
+					float anchoC = 0.0f, altoC = 0.0f, fondoC = 0.0f;
+					clientes[i]->GetDimensionesMundo(0.0f, 0.0f, 0.0f, 1.0f, anchoC, altoC, fondoC);
+					escalaCliente[i] = altoC > 0.01f ? AlturaCliente / altoC : 1.0f;
+				}
+
 				if (clientes[i]->LoadAnimationFile(modelos[i], "Idle"))
 					clientes[i]->PlayAnimation("Idle");
 				else
@@ -398,6 +565,25 @@ public:
 
 		// Registra las cajas del escenario.
 		ConfigurarColisiones();
+
+		// Productos 3D en las repisas (registra los huecos en el turno).
+		CargarProductos();
+
+		// Charcos de agua en los pasillos (como si hubieran trapeado).
+		CrearCharcos();
+
+		// Ovni atras del Oxxo (despues de las colisiones del escenario).
+		CrearNave();
+
+		// Arboles afuera y letreros de promocion adentro.
+		AgregarBillboards();
+
+		sonidos.Cargar("desierto", "Assets/Sonido/Desierto.wav");
+		sonidos.Cargar("click", "Assets/Sonido/click.mp3");
+		sonidos.Cargar("incorrecto", "Assets/Sonido/incorrecto.mp3");
+		sonidos.Cargar("ovni", "Assets/Sonido/ovni.mp3");
+		sonidos.Volumen("desierto", 400);
+		sonidos.Bucle("desierto");
 
 		// Deduce el volumen del jugador a partir de la malla del personaje.
 		float anchoJugador = 0.0f;
@@ -455,9 +641,17 @@ public:
 			delete clientes[i];
 			clientes[i] = nullptr;
 		}
-		delete productosCaidos;
-		productosCaidos = nullptr;
+		for (int i = 0; i < TotalTiposProducto; ++i)
+		{
+			delete tiposProducto[i].modelo;
+			tiposProducto[i].modelo = nullptr;
+		}
 		hud.Liberar();
+		charcos.Liberar();
+		sonidos.LiberarTodo();
+		efectosOvni.Liberar();
+		delete ovni;
+		ovni = nullptr;
 		depuradorColision.Liberar();
 		textoPantalla.Liberar();
 		delete billboard;
@@ -579,7 +773,7 @@ public:
 		result = d3dDevice->CreateTexture2D(&depthTexDesc, NULL, &depthTexture);
 		if (FAILED(result))
 		{
-			MessageBox(0, L"Error", L"Error al crear la DepthTexture", MB_OK);
+			OutputDebugStringW(L"Error al crear la DepthTexture\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
 
@@ -592,7 +786,7 @@ public:
 		result = d3dDevice->CreateDepthStencilView(depthTexture, &descDSV, &depthStencilView);
 		if (FAILED(result))
 		{
-			MessageBox(0, L"Error", L"Error al crear el depth stencil target view", MB_OK);
+			OutputDebugStringW(L"Error al crear el depth stencil target view\n");   // sin MessageBox (prohibido por la rubrica)
 			return false;
 		}
 
@@ -662,14 +856,14 @@ public:
 
 		TurnOffAlphaBlending();
 		chavo3->Draw(gpuView, gpuProjection, terreno->Superficie(-90, 30), camara->Position, 10.0f, 0, 'A', 0.5);
-		alien->Draw(gpuView, gpuProjection, terreno->Superficie(-58, 30), camara->Position, 10.0f, 0, 'A', 0.5);
+		//alien->Draw(gpuView, gpuProjection, terreno->Superficie(-58, 30), camara->Position, 10.0f, 0, 'A', 0.5);
 		chava1->Draw(gpuView, gpuProjection, terreno->Superficie(-15, 15), camara->Position, 10.0f, 0, 'A', 0.5);
 		chava2->Draw(gpuView, gpuProjection, terreno->Superficie(-40, 50), camara->Position, 180.0f, 0, 'X', 0.5);
 
 
-		carrito->Draw(gpuView, gpuProjection, terreno->Superficie(5, 5), camara->Position, 10.0f, 0, 'A', 1);
+		carrito->Draw(gpuView, gpuProjection, terreno->Superficie(CarritoX, CarritoZ), camara->Position, 10.0f, 0, 'A', EscalaCarrito);
 		cartel->Draw(gpuView, gpuProjection, terreno->Superficie(7, 7), camara->Position, 10.0f, 0, 'A', 0.5);
-		canasta->Draw(gpuView, gpuProjection, terreno->Superficie(9, 9), camara->Position, 10.0f, 0, 'A', 0.5);
+		DibujarCanastas(gpuView, gpuProjection);
 
 		refri_a1->Draw(gpuView, gpuProjection, terreno->Superficie(-26, 20) + 1.0f, camara->Position, 10.0f, 0, 'A', 1.5);
 		refri_a2->Draw(gpuView, gpuProjection, terreno->Superficie(-26, 20) + 1.0f, camara->Position, 10.0f, 0, 'A', 1.5);
@@ -681,11 +875,11 @@ public:
 
 
 
-		refri_b1->Draw(gpuView, gpuProjection, terreno->Superficie(-26, 20) + 1.0f, camara->Position, 10.0f, -65, 'Y', 1.5);
+		refri_b1->Draw(gpuView, gpuProjection, terreno->Superficie(-26, 20) + 1.0f, camara->Position, 10.0f, GiroRefriSuelto, 'Y', 1.5);
 
-		//repisa_b1->Draw(gpuView, gpuProjection, terreno->Superficie(-30.0f, 25.0f) + 1.0f, camara->Position, 10.0f, 0, 'A', 1.2);
-		repisa_b2->Draw(gpuView, gpuProjection, terreno->Superficie(-17.0f, 40.0f) + 1.0f, camara->Position, 10.0f, 0, 'Y', 1.2);
-		//repisa_b3->Draw(gpuView, gpuProjection, terreno->Superficie(-36.0f, 35.0f) + 1.0f, camara->Position, 10.0f, -170, 'Y', 1.2);
+		repisa_b2->Draw(gpuView, gpuProjection, AlturaGondola(0), camara->Position, 10.0f, GiroGondola, 'Y', 1.2f);
+		repisa_b1->Draw(gpuView, gpuProjection, AlturaGondola(1), camara->Position, 10.0f, GiroGondola, 'Y', 1.2f);
+		repisa_b3->Draw(gpuView, gpuProjection, AlturaGondola(2), camara->Position, 10.0f, GiroGondola, 'Y', 1.2f);
 		//repisa_b4->Draw(gpuView, gpuProjection, terreno->Superficie(-39.0f, 35.0f) + 1.0f, camara->Position, 10.0f, -45, 'Y', 1.2);
 
 		repisa_a1->Draw(gpuView, gpuProjection, terreno->Superficie(-36.0f, 35.0f) + 1.0f, camara->Position, 10.0f, 0, 'A', 1.2);
@@ -708,14 +902,18 @@ public:
 		oxxo->Draw(gpuView, gpuProjection, terreno->Superficie(-35, 25), camara->Position, 10.0f, 0, 'A', 2.3);
 
 
+		// Charcos: transparentes, despues de lo solido para que se mezclen.
+		charcos.Dibujar(camara->View, camara->Projection, camara->Position, tiempoJuego);
+		TurnOffAlphaBlending();
+		TurnOnDepth();
+
 		if (billboard != nullptr)
 			billboard->Dibujar(camara->View, camara->Projection, camara->Position);
 
 		paneles.Dibujar(camara->View, camara->Projection);
 
-		// Productos tirados en el piso / en la mano del jugador.
-		if (productosCaidos != nullptr)
-			productosCaidos->Dibujar(camara->View, camara->Projection, camara->Position);
+		// Productos en las estanterias, cayendo, en el piso o en la mano.
+		DibujarProductos(gpuView, gpuProjection);
 
 		// Cliente en turno frente a la caja (se alternan chava y chavo).
 		if (turno.ClienteVisibleEnCaja())
@@ -729,29 +927,36 @@ public:
 					&camara->Projection._11,
 					ySueloCliente,
 					TurnoExtraShift::YawHaciaPuesto(),
-					D3DXToRadian(0.0f),
-					D3DXToRadian(-90.0f),
-					D3DXToRadian(-90.0f),
-					0.28f,
+					0.0f,   // los FBX de Mixamo ya vienen con Y arriba:
+					0.0f,   // sin las correcciones del alien (que es de Blender)
+					0.0f,
+					escalaCliente[i],
 					0.0f);
 			}
 		}
 
 
+		// Alien: se oculta ya dentro de la nave; gira mientras lo abducen.
+		const bool alienVisible = !turno.Volando() && turno.ProgresoAbduccion() < 0.97f;
+		const float giroAbduccion = turno.ProgresoAbduccion() * 9.0f;
+
 		// prueba fbx
-		if (alienAnimLoaded && alien_anim != nullptr)
+		if (alienAnimLoaded && alien_anim != nullptr && alienVisible)
 		{
 			alien_anim->Draw(
 				&camara->View._11,
 				&camara->Projection._11,
 				playerPosition.y,
-				camara->Yaw,
+				camara->Yaw + giroAbduccion,
 				D3DXToRadian(0.0f),
 				D3DXToRadian(-90.0f),
 				D3DXToRadian(-90.0f),
 				0.28f,
 				0.0f);
 		}
+
+		// Ovni (con aura) y rayo de abduccion.
+		DibujarNave(gpuView, gpuProjection);
 
 		if (mostrarColisiones)
 		{
@@ -808,18 +1013,30 @@ public:
 	{
 		// Logica del turno: puede bloquear el movimiento, fijar la camara
 		// o mover al jugador a la caja, asi que va antes de la camara.
+		tiempoJuego += deltaTime;
 		ActualizarTurno(deltaTime);
 
 		const bool isMoving =
 			fabsf(moveBackForward) > 0.001f ||
 			fabsf(moveLeftRight) > 0.001f;
 
-		// Applies the input once and clears the per-frame input values.
-		UpdateCameraFromInput();
+		// Volando: la nave se mueve sola (camara en primera persona).
+		if (turno.Volando())
+			ActualizarVuelo(deltaTime);
+		else
+			UpdateCameraFromInput();   // aplica la entrada una vez y la limpia
+
+		// El jugador no puede salir del terreno (va de -250 a 250).
+		const float bordeJugador = 245.0f;
+		if (playerPosition.x > bordeJugador) playerPosition.x = bordeJugador;
+		if (playerPosition.x < -bordeJugador) playerPosition.x = -bordeJugador;
+		if (playerPosition.z > bordeJugador) playerPosition.z = bordeJugador;
+		if (playerPosition.z < -bordeJugador) playerPosition.z = -bordeJugador;
 
 		// Altura del jugador: terreno + pisos registrados en el sistema
 		// de colision. Despues se corrige la camara para que no se quede
-		// un frame abajo.
+		// un frame abajo. (No mientras sube a la nave o va volando.)
+		if (!turno.Volando() && !turno.Abduciendo())
 		{
 			const float alturaAnterior = playerPosition.y;
 
@@ -883,7 +1100,7 @@ public:
 				clientes[i]->Update(deltaTime);
 		}
 
-		ActualizarProductosCaidos();
+		// (los productos se mueven solos con el estado del turno)
 	}
 
 	// ---- Flujo de juego ----------------------------------------------------
@@ -951,19 +1168,59 @@ public:
 		if (turno.ConsumirRecogida())
 			pickupRequested = true;
 
+		if (turno.ConsumirSonidoClick())
+			sonidos.Tocar("click");
+
+		if (turno.ConsumirSonidoIncorrecto())
+			sonidos.Tocar("incorrecto");
+
+		ActualizarNaveEstacionada();
+
 		// Cielo de noche al terminar el turno (y de dia al reintentar).
+		// Transicion: el cielo se oscurece, se cambia la imagen y se aclara
+		// hasta la exposicion de la nueva hora (la noche queda oscura).
 		if (turno.EsNoche() != nocheAplicada)
 		{
 			nocheAplicada = turno.EsNoche();
-			skydome->ReemplazarTextura(nocheAplicada
-				? L"Assets/stars_sky.hdr"
-				: L"Assets/hdr_day.hdr");
+			transicionCielo = 1;
 		}
+
+		ActualizarCielo(deltaTime);
 
 		ySueloCliente = AlturaSueloJugador(
 			TurnoExtraShift::ClienteX,
 			TurnoExtraShift::ClienteZ,
 			playerPosition.y + 1.0f);
+	}
+
+	void ActualizarCielo(float deltaTime)
+	{
+		const float objetivo = nocheAplicada ? ExposicionNoche : ExposicionDia;
+		const float minimo = 0.02f;
+
+		if (transicionCielo == 1)
+		{
+			exposicionCielo -= deltaTime / DuracionTransicionCielo;
+			if (exposicionCielo <= minimo)
+			{
+				exposicionCielo = minimo;
+				skydome->ReemplazarTextura(nocheAplicada
+					? L"Assets/stars_sky.hdr"
+					: L"Assets/hdr_day.hdr");
+				transicionCielo = 2;
+			}
+		}
+		else if (transicionCielo == 2)
+		{
+			exposicionCielo += objetivo * deltaTime / DuracionTransicionCielo;
+			if (exposicionCielo >= objetivo)
+			{
+				exposicionCielo = objetivo;
+				transicionCielo = 0;
+			}
+		}
+
+		skydome->SetExposicion(exposicionCielo);
 	}
 
 	void ReiniciarJuego()
@@ -977,67 +1234,582 @@ public:
 		camara->Pitch = 0.0f;
 		pickupRequested = false;
 		pickupPlaying = false;
+		abduccionIniciada = false;
+		vueloIniciado = false;
+		EstacionarNave();
 	}
 
-	// Rehace los billboards de los productos cuando cambian y los mueve
-	// cada frame (cayendo del estante o en la mano del jugador).
-	void ActualizarProductosCaidos()
+	// ---- Billboards del escenario ------------------------------------------
+	// Siempre miran a la camara (giran en Y). Son 6 imagenes distintas:
+	// 2 tipos de arbol afuera y 4 letreros de promocion colgados adentro.
+	// No tienen colision (la rubrica los excluye).
+	void AgregarBillboards()
 	{
-		if (productosCaidos == nullptr)
+		if (billboard == nullptr)
 			return;
 
-		const int total = TurnoExtraShift::MaximoObjetos();
-
-		if (turno.GeneracionObjetos() != generacionProductos)
+		struct Arbol { const WCHAR* textura; float x, z, ancho; };
+		const Arbol arboles[] =
 		{
-			generacionProductos = turno.GeneracionObjetos();
-			productosCaidos->Vaciar();
+			{ L"arbol.png", 55.0f, -15.0f, 9.0f },
+			{ L"arbol.png", 20.0f, -40.0f, 8.0f },
+			{ L"arbol.png", -95.0f, -35.0f, 10.0f },
+			{ L"arbol.png", -110.0f, 60.0f, 9.0f },
+			{ L"arbol.png", 25.0f, 85.0f, 8.5f },
+			{ L"arbolisho.png", 35.0f, -70.0f, 10.0f },
+			{ L"arbolisho.png", -100.0f, 5.0f, 9.0f },
+			{ L"arbolisho.png", 65.0f, 55.0f, 11.0f },
+			{ L"arbolisho.png", -25.0f, 110.0f, 9.5f },
+			{ L"arbolisho.png", -75.0f, 95.0f, 10.0f },
+		};
 
-			for (int i = 0; i < total && i < 3; ++i)
+		for (size_t i = 0; i < sizeof(arboles) / sizeof(arboles[0]); ++i)
+		{
+			const Arbol& a = arboles[i];
+			billboard->AgregarConAspecto(a.textura, a.x, a.z, terreno->Superficie(a.x, a.z), a.ancho);
+		}
+
+		// Letreros de promocion colgados del techo, sobre los pasillos.
+		struct Letrero { const WCHAR* textura; float x, z; };
+		const Letrero letreros[] =
+		{
+			{ L"Assets/Billboards/oreo.png", -33.0f, 32.7f },
+			{ L"Assets/Billboards/hersheys.png", -36.0f, 27.5f },
+			{ L"Assets/Billboards/boing.png", -30.0f, 22.4f },
+			{ L"Assets/Billboards/cokita.png", -23.5f, 39.0f },
+		};
+
+		for (size_t i = 0; i < sizeof(letreros) / sizeof(letreros[0]); ++i)
+		{
+			const Letrero& l = letreros[i];
+			const float piso = AlturaPisoTienda(l.x, l.z);
+			billboard->AgregarConAspecto(l.textura, l.x, l.z, piso + 6.2f, 4.5f);
+		}
+	}
+
+	// ---- Nave del alien ---------------------------------------------------
+
+	// Carga el ovni, sus efectos y un sistema de colision propio: el del
+	// escenario mas una caja con el edificio completo del Oxxo (techo
+	// incluido), para que la nave no lo atraviese.
+	void CrearNave()
+	{
+		ovni = new ModeloRR(d3dDevice, d3dContext,
+			const_cast<char*>("Assets/Modelos/objetos/ovni.obj"),
+			const_cast<WCHAR*>(L"Assets/Modelos/objetos/ovni.jpeg"),
+			const_cast<WCHAR*>(L"Assets/Modelos/objetos/cartel/Material_45_normal.png"),
+			TurnoExtraShift::NaveX,
+			TurnoExtraShift::NaveZ);
+
+		if (ovni->TieneLimites())
+		{
+			const D3DXVECTOR3 minimo = ovni->GetMinLocal();
+			const D3DXVECTOR3 maximo = ovni->GetMaxLocal();
+			const float anchoX = maximo.x - minimo.x;
+			const float anchoZ = maximo.z - minimo.z;
+
+			naveRadio = (anchoX > anchoZ ? anchoX : anchoZ) * 0.5f * EscalaOvni;
+			naveAltura = (maximo.y - minimo.y) * EscalaOvni;
+			naveBase = -minimo.y * EscalaOvni;
+		}
+
+		efectosOvni.Inicializar(d3dDevice, d3dContext);
+
+		colisionesNave = colisiones;
+		const float baseOxxo = terreno->Superficie(-35.0f, 25.0f);
+		colisionesNave.AgregarCajaMinMax(
+			D3DXVECTOR3(-61.0f, baseOxxo, 4.0f),
+			D3DXVECTOR3(-9.0f, baseOxxo + 14.5f, 45.5f),
+			true, false, "edificio_oxxo");
+
+		EstacionarNave();
+	}
+
+	// Flotando atras del Oxxo.
+	void EstacionarNave()
+	{
+		navePos = D3DXVECTOR3(
+			TurnoExtraShift::NaveX,
+			terreno->Superficie(TurnoExtraShift::NaveX, TurnoExtraShift::NaveZ) + AlturaFlote,
+			TurnoExtraShift::NaveZ);
+	}
+
+	static float Suave(float a, float b, float x)
+	{
+		float t = (x - a) / (b - a);
+		if (t < 0.0f) t = 0.0f;
+		if (t > 1.0f) t = 1.0f;
+		return t * t * (3.0f - 2.0f * t);
+	}
+
+	// Abduccion: el alien va debajo de la nave y sube girando. Al terminar,
+	// la camara pasa a primera persona dentro de la nave.
+	void ActualizarNaveEstacionada()
+	{
+		if (turno.Abduciendo())
+		{
+			if (!abduccionIniciada)
 			{
-				billboardDeProducto[i] = -1;
+				abduccionIniciada = true;
+				inicioAbduccion = playerPosition;
+				thirdPerson = true;
+				sonidos.Tocar("ovni");
+			}
 
-				float x, z, caida;
-				bool enMano;
-				int estante;
+			const float p = turno.ProgresoAbduccion();
+			const float avance = Suave(0.0f, 0.35f, p);
+			const float subida = Suave(0.1f, 1.0f, p);
 
-				if (!turno.ObjetoActivo(i, x, z, caida, enMano, estante))
+			playerPosition.x = inicioAbduccion.x + (navePos.x - inicioAbduccion.x) * avance;
+			playerPosition.z = inicioAbduccion.z + (navePos.z - inicioAbduccion.z) * avance;
+			playerPosition.y = inicioAbduccion.y + (navePos.y + naveAltura * 0.3f - inicioAbduccion.y) * subida;
+		}
+
+		if (turno.Volando() && !vueloIniciado)
+		{
+			vueloIniciado = true;
+			thirdPerson = false;
+			alturaDespegue = navePos.y;
+			camara->Pitch = D3DXToRadian(8.0f);
+		}
+	}
+
+	// Manejo de la nave en primera persona: W/S adelante y atras, A/D a los
+	// lados, ESPACIO sube, SHIFT baja; el mouse mira. Choca con las cajas
+	// del escenario, no baja del piso ni pasa de LimiteVuelo. Se gana al
+	// subir SubidaParaEscapar sobre el punto de despegue.
+	void ActualizarVuelo(float deltaTime)
+	{
+		(void)deltaTime;
+
+		camara->Yaw += camYaw;
+		camara->Pitch += camPitch;
+
+		const float maxPitch = D3DXToRadian(80.0f);
+		if (camara->Pitch > maxPitch) camara->Pitch = maxPitch;
+		if (camara->Pitch < -maxPitch) camara->Pitch = -maxPitch;
+
+		const D3DXVECTOR3 adelante(sinf(camara->Yaw), 0.0f, cosf(camara->Yaw));
+		const D3DXVECTOR3 derecha(cosf(camara->Yaw), 0.0f, -sinf(camara->Yaw));
+
+		const D3DXVECTOR3 desplazamiento =
+			(adelante * moveBackForward + derecha * moveLeftRight) * VelocidadNave;
+
+		navePos = colisionesNave.Mover(navePos, desplazamiento, naveRadio, naveAltura);
+
+		// No llegar a la orilla del mundo (ahi se ve el borde del cielo).
+		const float borde = LimiteVuelo;
+		if (navePos.x > borde) navePos.x = borde;
+		if (navePos.x < -borde) navePos.x = -borde;
+		if (navePos.z > borde) navePos.z = borde;
+		if (navePos.z < -borde) navePos.z = -borde;
+
+		// Subir / bajar, sin meterse al piso ni a una caja.
+		const float suelo = colisionesNave.AlturaSuelo(
+			navePos.x, navePos.z, navePos.y,
+			terreno->Superficie(navePos.x, navePos.z)) + 0.3f;
+
+		D3DXVECTOR3 intento = navePos;
+		intento.y += moveUpDown;
+		if (intento.y < suelo) intento.y = suelo;
+		if (intento.y > AlturaMaximaNave) intento.y = AlturaMaximaNave;
+
+		if (!colisionesNave.Solapa(intento, naveRadio, naveAltura))
+			navePos.y = intento.y;
+
+		if (navePos.y < suelo)
+			navePos.y = suelo;
+
+		// La camara va arriba de la nave (se ve el casco abajo).
+		D3DXVECTOR3 ojo = navePos;
+		ojo.y += naveAltura + AlturaOjoNave;
+		camara->UpdateFirstPerson(ojo, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
+
+		playerPosition = navePos;
+
+		// Se gana subiendo: al llegar a cierta altura sobre donde despego.
+		const float subido = navePos.y - alturaDespegue;
+		turno.ProgresoVuelo(subido, SubidaParaEscapar);
+		if (subido >= SubidaParaEscapar)
+			turno.Escapar();
+
+		moveBackForward = 0.0f;
+		moveLeftRight = 0.0f;
+		moveUpDown = 0.0f;
+		camYaw = 0.0f;
+		camPitch = 0.0f;
+	}
+
+	// El ovni flota (sube y baja), gira despacio y tiene un aura verde
+	// (brillo en el casco + resplandor). Durante la abduccion, rayo verde.
+	void DibujarNave(const D3DXMATRIX& vista, const D3DXMATRIX& proyeccion)
+	{
+		if (ovni == nullptr)
+			return;
+
+		const bool volando = turno.Volando();
+		const float flote = volando ? 0.0f : sinf(tiempoJuego * 1.6f) * 0.35f;
+		const float y = navePos.y + flote;
+		const float aura = 0.45f + 0.25f * sinf(tiempoJuego * 2.5f);
+
+		CentrarModelo(ovni, navePos.x, navePos.z, EscalaOvni);
+		ovni->SetResaltado(0.35f, 1.0f, 0.55f, volando ? 0.15f : aura);
+		ovni->Draw(vista, proyeccion, y + naveBase, camara->Position,
+			10.0f, tiempoJuego * 0.4f, 'Y', EscalaOvni);
+		ovni->SetResaltado(0.0f, 0.0f, 0.0f, 0.0f);
+
+		if (!volando)
+		{
+			efectosOvni.DibujarAura(camara->View, camara->Projection,
+				D3DXVECTOR3(navePos.x, y + naveAltura * 0.5f, navePos.z),
+				naveRadio * 1.7f, tiempoJuego,
+				turno.NaveReparada() ? 1.0f : 0.6f);
+		}
+
+		if (turno.Abduciendo())
+		{
+			const float p = turno.ProgresoAbduccion();
+			const float intensidad = Suave(0.0f, 0.15f, p) * (1.0f - Suave(0.9f, 1.0f, p));
+
+			efectosOvni.DibujarRayo(camara->View, camara->Projection,
+				D3DXVECTOR3(navePos.x, y + 0.3f, navePos.z), naveRadio * 0.35f,
+				inicioAbduccion.y, naveRadio * 0.75f,
+				tiempoJuego, intensidad);
+		}
+
+		TurnOffAlphaBlending();
+		TurnOnDepth();
+	}
+
+	// Charcos de agua: posiciones en los pasillos del Oxxo, sobre el piso.
+	void CrearCharcos()
+	{
+		if (!charcos.Inicializar(d3dDevice, d3dContext))
+			return;
+
+		struct DatosCharco { float x, z, radioX, radioZ, giro; };
+		const DatosCharco datos[] =
+		{
+			{ -26.0f, 32.7f, 1.6f, 1.0f, 0.4f },   // entre repisas z 35 y la gondola gris
+			{ -36.0f, 27.5f, 1.4f, 0.9f, 1.2f },   // pasillo entre z 30 y z 25
+			{ -44.0f, 39.0f, 1.8f, 1.2f, 0.2f },   // frente, cerca de la entrada
+			{ -22.0f, 22.4f, 1.3f, 0.8f, 2.0f },   // frente a los refris
+			{ -24.0f, 39.0f, 1.1f, 0.7f, 0.7f },   // frente a las gondolas
+			{ -47.0f, 25.5f, 1.5f, 1.0f, 1.5f },   // junto a la caja
+		};
+
+		for (size_t i = 0; i < sizeof(datos) / sizeof(datos[0]); ++i)
+		{
+			const DatosCharco& d = datos[i];
+			const float piso = colisiones.AlturaSuelo(d.x, d.z, 100.0f, terreno->Superficie(d.x, d.z));
+			charcos.Agregar(d.x, piso, d.z, d.radioX, d.radioZ, d.giro);
+		}
+	}
+
+	// ---- Productos en las estanterias -----------------------------------
+
+	// Carga un modelo por variante y calcula su escala y su centro con los
+	// limites de la malla, para que todos quepan en una repisa.
+	void CargarProductos()
+	{
+		struct Catalogo
+		{
+			const char* obj;
+			const WCHAR* textura;
+			const char* nombre;
+		};
+
+		static const Catalogo catalogo[TotalTiposProducto] =
+		{
+			{ "Assets/Modelos/objetos/cereal.obj", L"Assets/Modelos/objetos/sucaritas.jpeg", "las Sucaritas" },
+			{ "Assets/Modelos/objetos/cereal.obj", L"Assets/Modelos/objetos/cheerios.jpeg", "los Cheerios" },
+			{ "Assets/Modelos/objetos/cokita.obj", L"Assets/Modelos/objetos/cokita.jpeg", "la Cokita" },
+			{ "Assets/Modelos/objetos/zote.obj", L"Assets/Modelos/objetos/zote.jpeg", "el jabón Zote" },
+			{ "Assets/Modelos/objetos/papas.obj", L"Assets/Modelos/objetos/doritos.jpeg", "los Doritos" },
+			{ "Assets/Modelos/objetos/papas.obj", L"Assets/Modelos/objetos/doritos1.jpeg", "los Doritos" },
+			{ "Assets/Modelos/objetos/nutri.obj", L"Assets/Modelos/objetos/nutri.jpeg", "el Nutri" },
+			{ "Assets/Modelos/objetos/dulce.obj", L"Assets/Modelos/objetos/mys.jpeg", "los M&M's" },
+		};
+
+		for (int i = 0; i < TotalTiposProducto; ++i)
+		{
+			TipoProducto& t = tiposProducto[i];
+			t.nombre = catalogo[i].nombre;
+			t.modelo = new ModeloRR(
+				d3dDevice,
+				d3dContext,
+				const_cast<char*>(catalogo[i].obj),
+				const_cast<WCHAR*>(catalogo[i].textura),
+				L"Assets/Modelos/objetos/cartel/Material_45_normal.png",
+				0.0f,
+				0.0f);
+
+			if (!t.modelo->TieneLimites())
+				continue;
+
+			const D3DXVECTOR3 minimo = t.modelo->GetMinLocal();
+			const D3DXVECTOR3 maximo = t.modelo->GetMaxLocal();
+
+			const float alto = maximo.y - minimo.y;
+			const float anchoX = maximo.x - minimo.x;
+			const float anchoZ = maximo.z - minimo.z;
+			const float ancho = anchoX > anchoZ ? anchoX : anchoZ;
+
+			float escala = AltoProducto / (alto > 0.001f ? alto : 1.0f);
+			const float escalaAncho = AnchoProducto / (ancho > 0.001f ? ancho : 1.0f);
+			if (escalaAncho < escala)
+				escala = escalaAncho;
+
+			t.escala = escala;
+			t.centroX = (minimo.x + maximo.x) * 0.5f;
+			t.centroZ = (minimo.z + maximo.z) * 0.5f;
+			t.base = -minimo.y * escala;          // parado: pies en y
+			t.baseAcostado = -minimo.x * escala;  // acostado (giro de 90 en Z)
+		}
+
+		// --- Repisas metalicas (repisa-2): abiertas, caen adelante o atras ---
+		struct Repisa
+		{
+			ModeloRR* modelo;
+			float y;   // misma altura con la que se dibujan en Render
+		};
+
+		const Repisa repisas[] =
+		{
+			{ repisa_a1, terreno->Superficie(-36.0f, 35.0f) + 1.0f },
+			{ repisa_a2, terreno->Superficie(-40.0f, 35.0f) + 1.0f },
+			{ repisa_a3, terreno->Superficie(-44.0f, 35.0f) + 1.0f },
+			{ repisa_a4, terreno->Superficie(-32.0f, 30.0f) + 1.0f },
+			{ repisa_a5, terreno->Superficie(-36.0f, 30.0f) + 1.0f },
+			{ repisa_a6, terreno->Superficie(-30.0f, 25.0f) + 1.0f },
+			{ repisa_a7, terreno->Superficie(-34.0f, 25.0f) + 1.0f },
+			{ repisa_a8, terreno->Superficie(-38.0f, 25.0f) + 1.0f },
+			{ repisa_a9, terreno->Superficie(-20.0f, 35.0f) + 1.0f },
+			{ repisa_a10, terreno->Superficie(-24.0f, 35.0f) + 1.0f },
+			{ repisa_a11, terreno->Superficie(-40.0f, 30.0f) + 1.0f },
+			{ repisa_a12, terreno->Superficie(-40.0f, 30.0f) + 1.0f },
+		};
+
+		// Cara superior de cada repisa en coordenadas del modelo repisa-2
+		// (medidas del .obj), por la escala 1.2 con que se dibuja.
+		{
+			const float niveles[] = { 0.52f, 1.52f, 2.62f };
+			const float columnas[] = { -1.3f, 0.0f, 1.3f };
+			const float escalaRepisa = 1.2f;
+			const int totalRepisas = (int)(sizeof(repisas) / sizeof(repisas[0]));
+
+			for (int r = 0; r < totalRepisas; ++r)
+			{
+				ModeloRR* repisa = repisas[r].modelo;
+				if (repisa == nullptr)
 					continue;
 
-				if (productosCaidos->AgregarConAspecto(
-						turno.TexturaEstante(estante), x, z, playerPosition.y, 1.2f))
+				const float rx = repisa->getPosX();
+				const float rz = repisa->getPosZ();
+				const int estante = turno.AgregarEstante(rx, rz);
+
+				for (int n = 0; n < 3; ++n)
 				{
-					billboardDeProducto[i] = (int)productosCaidos->Cantidad() - 1;
+					// Cada repisa lleva un producto distinto para que se vea surtido.
+					const int tipo = (r * 3 + n) % TotalTiposProducto;
+
+					for (int c = 0; c < 3; ++c)
+					{
+						TurnoExtraShift::Colocacion col;
+						col.tipo = tipo;
+						col.x = rx + columnas[c];
+						col.y = repisas[r].y + niveles[n] * escalaRepisa;
+						col.z = rz;
+						col.nombre = tiposProducto[tipo].nombre;
+						turno.AgregarEspacio(estante, col);
+					}
 				}
 			}
 		}
 
-		for (int i = 0; i < total && i < 3; ++i)
+		// --- Gondolas (repisa-1): una sola cara, hacia la caja (-X) ---
+		// Repisas inclinadas del .obj: se usa la altura del borde de atras.
+		// El fondo de la repisa va de x -1.08 a 0.2 (locales); los productos
+		// van a la mitad, a lo largo de Z.
 		{
-			if (billboardDeProducto[i] < 0)
-				continue;
+			ModeloRR* gondolas[3] = { repisa_b2, repisa_b1, repisa_b3 };
+			const float niveles[] = { 0.40f, 1.18f, 2.08f, 2.98f };
+			const float columnas[] = { -1.3f, 0.0f, 1.3f };
+			const float escalaGondola = 1.2f;
+			const float fondoLocal = -0.44f;
 
-			float x, z, caida;
+			// Mitad del fondo, girada igual que el modelo.
+			const float offX = fondoLocal * cosf(GiroGondola) * escalaGondola;
+			const float offZ = -fondoLocal * sinf(GiroGondola) * escalaGondola;
+
+			for (int g = 0; g < 3; ++g)
+			{
+				if (gondolas[g] == nullptr)
+					continue;
+
+				const float gx = gondolas[g]->getPosX();
+				const float gz = gondolas[g]->getPosZ();
+				const int estante = turno.AgregarEstante(gx + offX, gz + offZ);
+
+				for (int n = 0; n < 4; ++n)
+				{
+					const int tipo = (g * 4 + n + 3) % TotalTiposProducto;
+
+					for (int c = 0; c < 3; ++c)
+					{
+						TurnoExtraShift::Colocacion col;
+						col.tipo = tipo;
+						// Columnas a lo largo de la gondola (su eje Z local, girado).
+						col.x = gx + offX + columnas[c] * sinf(GiroGondola);
+						col.y = AlturaGondola(g) + niveles[n] * escalaGondola;
+						col.z = gz + offZ + columnas[c] * cosf(GiroGondola);
+						col.escala = 0.9f;                       // repisas mas juntas
+						col.giroY = GiroGondola - (float)D3DX_PI * 1.5f; // etiqueta hacia el pasillo
+						col.caidaX = cosf(GiroGondola);            // cae al pasillo de enfrente
+						col.caidaZ = -sinf(GiroGondola);
+						col.nombre = tiposProducto[tipo].nombre;
+						turno.AgregarEspacio(estante, col);
+					}
+				}
+			}
+		}
+
+		// --- Gondola gris que viene dentro de oxxo.obj (doble cara) ---
+		// Medida del .obj: x local 2.83..5.74, z 1.76..2.79, repisas en y
+		// 0.50, 1.01, 1.38, 1.75; el modelo se dibuja a escala 2.3 en (-35, 25).
+		{
+			const float escalaOxxo = 2.3f;
+			const float baseY = terreno->Superficie(-35.0f, 25.0f);
+			const float centroX = -35.0f + 4.28f * escalaOxxo;   // -25.2
+			const float centroZ = 25.0f + 2.27f * escalaOxxo;    //  30.2
+			const float niveles[] = { 0.50f, 1.01f, 1.38f, 1.75f };
+			const float columnas[] = { -2.6f, -1.3f, 0.0f, 1.3f, 2.6f };
+			const float ladoZ = 0.6f;
+
+			const int estante = turno.AgregarEstante(centroX, centroZ);
+
+			for (int lado = 0; lado < 2; ++lado)
+			{
+				const float signo = lado == 0 ? -1.0f : 1.0f;
+
+				for (int n = 0; n < 4; ++n)
+				{
+					const int tipo = (lado * 4 + n + 5) % TotalTiposProducto;
+
+					for (int c = 0; c < 5; ++c)
+					{
+						TurnoExtraShift::Colocacion col;
+						col.tipo = tipo;
+						col.x = centroX + columnas[c];
+						col.y = baseY + niveles[n] * escalaOxxo;
+						col.z = centroZ + signo * ladoZ;
+						col.escala = 0.8f;                                   // repisas bajas
+						col.giroY = lado == 0 ? (float)D3DX_PI : 0.0f;       // cada cara a su pasillo
+						col.caidaZ = signo;
+						col.nombre = tiposProducto[tipo].nombre;
+						turno.AgregarEspacio(estante, col);
+					}
+				}
+			}
+		}
+	}
+
+	// Dibuja un producto parado (giroY) o, con `acostado` = 1, tirado en el
+	// piso (giro de 90 en Z). `brillo` > 0 lo resalta con el shader.
+	void DibujarProducto(
+		const D3DXMATRIX& vista,
+		const D3DXMATRIX& proyeccion,
+		const TurnoExtraShift::Colocacion& c,
+		float x,
+		float y,
+		float z,
+		float acostado,
+		float brillo)
+	{
+		if (c.tipo < 0 || c.tipo >= TotalTiposProducto)
+			return;
+
+		TipoProducto& t = tiposProducto[c.tipo];
+		if (t.modelo == nullptr || t.escala <= 0.0f)
+			return;
+
+		const float escala = t.escala * c.escala;
+
+		if (brillo > 0.0f)
+			t.modelo->SetResaltado(1.0f, 0.78f, 0.12f, brillo);   // ambar
+
+		if (acostado <= 0.0f)
+		{
+			// Parado: el centro de la malla queda en (x, z), girado en Y.
+			const float cx = t.centroX * escala;
+			const float cz = t.centroZ * escala;
+			const float cs = cosf(c.giroY);
+			const float sn = sinf(c.giroY);
+
+			t.modelo->SetPosicion(
+				x - (cx * cs + cz * sn),
+				z - (-cx * sn + cz * cs));
+
+			t.modelo->Draw(vista, proyeccion, y + t.base * c.escala, camara->Position,
+				10.0f, c.giroY, 'Y', escala);
+		}
+		else
+		{
+			const float base = (t.base + (t.baseAcostado - t.base) * acostado) * c.escala;
+
+			t.modelo->SetPosicion(
+				x - t.centroX * escala * (1.0f - acostado),
+				z - t.centroZ * escala);
+
+			t.modelo->Draw(vista, proyeccion, y + base, camara->Position,
+				10.0f, acostado * (float)D3DX_PI * 0.5f, 'Z', escala);
+		}
+
+		if (brillo > 0.0f)
+			t.modelo->SetResaltado(0.0f, 0.0f, 0.0f, 0.0f);
+	}
+
+	// Productos en su lugar + los que se cayeron (cayendo, en el piso o
+	// en la mano del jugador). Los huecos de los caidos quedan vacios y
+	// los caidos brillan (pulso ambar) para que se noten.
+	void DibujarProductos(const D3DXMATRIX& vista, const D3DXMATRIX& proyeccion)
+	{
+		for (int i = 0; i < turno.TotalEspacios(); ++i)
+		{
+			const TurnoExtraShift::Colocacion* c = turno.EspacioEnEstante(i);
+			if (c != nullptr)
+				DibujarProducto(vista, proyeccion, *c, c->x, c->y, c->z, 0.0f, 0.0f);
+		}
+
+		const float suelo = playerPosition.y;
+		const float pulso = 0.6f + 0.4f * sinf(tiempoJuego * 5.0f);
+
+		for (int i = 0; i < TurnoExtraShift::MaximoObjetos(); ++i)
+		{
+			TurnoExtraShift::Colocacion c;
+			float caida;
 			bool enMano;
-			int estante;
 
-			if (!turno.ObjetoActivo(i, x, z, caida, enMano, estante))
+			if (!turno.ObjetoActivo(i, c, caida, enMano))
 				continue;
-
-			const float suelo = playerPosition.y;
-			float y = suelo + (1.0f - caida) * 3.0f;
 
 			if (enMano)
 			{
-				// Frente al jugador, a la altura de las manos.
-				x += sinf(camara->Yaw) * 1.5f;
-				z += cosf(camara->Yaw) * 1.5f;
-				y = suelo + 2.0f;
+				// Frente al jugador, a la altura de las manos (brillo suave).
+				const float x = c.x + sinf(camara->Yaw) * 1.5f;
+				const float z = c.z + cosf(camara->Yaw) * 1.5f;
+				DibujarProducto(vista, proyeccion, c, x, suelo + 2.0f, z, 0.0f, 0.3f);
+				continue;
 			}
 
-			productosCaidos->Mover((size_t)billboardDeProducto[i], x, z, y);
+			// Cae con aceleracion y se va volteando hasta quedar acostado.
+			const float t = caida * caida;
+			const float altura = c.y + (suelo - c.y) * t;
+			DibujarProducto(vista, proyeccion, c, c.x, altura, c.z, caida > 0.02f ? caida : 0.02f, pulso);
 		}
 	}
+
+
 
 	// ---- HUD ------------------------------------------------------------
 
@@ -1101,6 +1873,9 @@ public:
 		if (!turno.EnDialogo())
 			return;
 
+		// Ticket del cliente en la pantallita (arriba a la izquierda).
+		DibujarTicket(sx, sy);
+
 		// Cuadro de dialogo con la linea del cliente.
 		hud.DibujarCompleta(HudFondoDialogo);
 
@@ -1153,6 +1928,70 @@ public:
 		}
 	}
 
+	// Billboard del ticket (pantalla.png): la imagen es una pantallita en
+	// perspectiva, asi que el texto se dibuja deformado para seguir sus
+	// esquinas. Medidas en pixeles de la textura de 1920x1080.
+	void DibujarTicket(float sx, float sy)
+	{
+		// Recorte de la textura y donde va en pantalla (referencia 1920x1080).
+		const float recorte[4] = { 228.0f, 232.0f, 1132.0f, 1000.0f };
+		const float destinoX = 16.0f;
+		const float destinoY = 140.0f;
+		const float escala = 0.6f;
+		const float u = 1.0f / 1920.0f;
+		const float v = 1.0f / 1080.0f;
+
+		hud.Dibujar(HudTicket,
+			destinoX * sx, destinoY * sy,
+			(recorte[2] - recorte[0]) * escala * sx,
+			(recorte[3] - recorte[1]) * escala * sy,
+			recorte[0] * u, recorte[1] * v, recorte[2] * u, recorte[3] * v);
+
+		// Esquinas de la pantalla blanca dentro de la textura.
+		const float esquinasX[4] = { 247.0f, 1040.0f, 1120.0f, 430.0f };
+		const float esquinasY[4] = { 440.0f, 240.0f, 725.0f, 990.0f };
+
+		TextoPantalla::Cuadro cuadro;
+		cuadro.ancho = 400.0f;
+		cuadro.alto = 284.0f;
+
+		for (int i = 0; i < 4; ++i)
+		{
+			cuadro.x[i] = (destinoX + (esquinasX[i] - recorte[0]) * escala) * sx;
+			cuadro.y[i] = (destinoY + (esquinasY[i] - recorte[1]) * escala) * sy;
+		}
+
+		// Lienzo 400 x 284. Zonas medidas en la imagen: barra roja arriba
+		// (y 14..40), panel verde a la izquierda (x 36..188), area blanca a
+		// la derecha (x 205..372) y boton azul abajo a la derecha.
+		char texto[160];
+
+		textoPantalla.DibujarEnCuadro("TICKET  OXXO", cuadro, 20.0f, 16.0f, 2.0f, 1.0f, 1.0f, 1.0f);
+
+		TurnoExtraShift::RenglonTicket renglones[5];
+		float total = 0.0f;
+		const int n = turno.RenglonesTicket(renglones, 5, total);
+
+		for (int i = 0; i < n; ++i)
+		{
+			const float y = 58.0f + i * 31.0f;
+
+			sprintf_s(texto, "%dx %s", renglones[i].cantidad, renglones[i].nombre);
+			textoPantalla.DibujarEnCuadro(texto, cuadro, 42.0f, y, 1.2f, 0.08f, 0.22f, 0.20f);
+
+			sprintf_s(texto, "%d x $%.2f", renglones[i].cantidad, renglones[i].precio);
+			textoPantalla.DibujarEnCuadro(texto, cuadro, 42.0f, y + 14.0f, 0.95f, 0.20f, 0.38f, 0.36f);
+
+			sprintf_s(texto, "$%.2f", renglones[i].cantidad * renglones[i].precio);
+			textoPantalla.DibujarEnCuadro(texto, cuadro, 220.0f, y + 4.0f, 1.4f, 0.15f, 0.15f, 0.15f);
+		}
+
+		textoPantalla.DibujarEnCuadro(turno.NombreCliente(), cuadro, 210.0f, 194.0f, 1.0f, 0.35f, 0.35f, 0.35f);
+
+		sprintf_s(texto, "TOTAL $%.2f", total);
+		textoPantalla.DibujarEnCuadro(texto, cuadro, 256.0f, 234.0f, 1.3f, 1.0f, 1.0f, 1.0f);
+	}
+
 	void DibujarPantallaFinal(float ancho, float alto, float s)
 	{
 		const float sombra[4] = { 0.0f, 0.0f, 0.0f, 0.78f };
@@ -1172,7 +2011,7 @@ public:
 
 		char detalle[512];
 		if (gano)
-			sprintf_s(detalle, "Juntaste $%.0f, compraste la pieza averiada y despegaste. ¡Ganaste!", turno.Pesos());
+			sprintf_s(detalle, "Reparaste tu nave y escapaste volando de la Tierra. ¡Ganaste!");
 		else
 			sprintf_s(detalle, "%s", turno.Motivo());
 
@@ -1258,14 +2097,13 @@ public:
 
 		// Personajes estaticos 
 		AgregarCajaModelo(chavo3, terreno->Superficie(-90, 30), 0.0f, 'A', 0.5f, "chavo3");
-		AgregarCajaModelo(alien, terreno->Superficie(-58, 30), 0.0f, 'A', 0.5f, "alien_obj");
+		//AgregarCajaModelo(alien, terreno->Superficie(-58, 30), 0.0f, 'A', 0.5f, "alien_obj");
 		AgregarCajaModelo(chava1, terreno->Superficie(-15, 15), 0.0f, 'A', 0.5f, "chava1");
 		AgregarCajaModelo(chava2, terreno->Superficie(-26, 20), 180.0f, 'X', 0.5f, "chava2");
 
 		// Objetos 
-		AgregarCajaModelo(carrito, terreno->Superficie(5, 5), 0.0f, 'A', 1.0f, "carrito");
+		AgregarCajaModelo(carrito, terreno->Superficie(CarritoX, CarritoZ), 0.0f, 'A', EscalaCarrito, "carrito");
 		AgregarCajaModelo(cartel, terreno->Superficie(7, 7), 0.0f, 'A', 0.5f, "cartel");
-		AgregarCajaModelo(canasta, terreno->Superficie(9, 9), 0.0f, 'A', 0.5f, "canasta");
 
 		AgregarCajaModelo(refri_a1, terreno->Superficie(-26, 20) + 1.0f, 0.0f, 'A', 1.5f, "refri_a1");
 		AgregarCajaModelo(refri_a2, terreno->Superficie(-26, 20) + 1.0f, 0.0f, 'A', 1.5f, "refri_a2");
@@ -1276,11 +2114,11 @@ public:
 		AgregarCajaModelo(refri_a7, terreno->Superficie(-26, 20) + 1.0f, 0.0f, 'A', 1.5f, "refri_a7");
 
 
-		AgregarCajaModelo(refri_b1, terreno->Superficie(-15, 25) + 1.0f, -35.0f, 'Y', 1.5f, "refri_b1");
+		AgregarCajaModelo(refri_b1, terreno->Superficie(-26, 20) + 1.0f, GiroRefriSuelto, 'Y', 1.5f, "refri_b1");
 
-		//AgregarCajaModelo(repisa_b1, terreno->Superficie(-30.0f, 25.0f) + 1.0f, 90.0f, 'A', 1.2f, "repisa_b1");
-		AgregarCajaModelo(repisa_b2, terreno->Superficie(-17.0f, 40.0f) + 1.0f, 0.0f, 'Y', 1.2f, "repisa_b2");
-		//AgregarCajaModelo(repisa_b3, terreno->Superficie(-36.0f, 35.0f) + 1.0f, -90.0f, 'Y', 1.2f, "repisa_b3");
+		AgregarCajaModelo(repisa_b2, AlturaGondola(0), GiroGondola, 'Y', 1.2f, "repisa_b2");
+		AgregarCajaModelo(repisa_b1, AlturaGondola(1), GiroGondola, 'Y', 1.2f, "repisa_b1");
+		AgregarCajaModelo(repisa_b3, AlturaGondola(2), GiroGondola, 'Y', 1.2f, "repisa_b3");
 		//AgregarCajaModelo(repisa_b4, terreno->Superficie(-39.0f, 35.0f) + 1.0f, -90.0f, 'Y', 1.2f, "repisa_b4");
 
 
@@ -1306,6 +2144,9 @@ public:
 
 
 		colisiones.AgregarPiso(-35, 25, 12.5f, 50.0f, 45.0f, 0.5f, "piso_edificio");
+
+		// Pilas de canastas (despues del piso para saber su altura).
+		AgregarCajasCanastas();
 
 		// cajas en coordenadas locales del modelo:
 
@@ -1546,7 +2387,7 @@ public:
 		result = d3dDevice->CreateBlendState(&descABSD, &alphaBlendState);
 		if (FAILED(result))
 		{
-			MessageBox(0, L"Error", L"Error al crear el blend state", MB_OK);
+			OutputDebugStringW(L"Error al crear el blend state\n");   // sin MessageBox (prohibido por la rubrica)
 			return;
 		}
 
@@ -1571,7 +2412,7 @@ public:
 		result = d3dDevice->CreateBlendState(&descCBSD, &commonBlendState);
 		if (FAILED(result))
 		{
-			MessageBox(0, L"Error", L"Error al crear el blend state", MB_OK);
+			OutputDebugStringW(L"Error al crear el blend state\n");   // sin MessageBox (prohibido por la rubrica)
 			return;
 		}
 
@@ -1635,8 +2476,8 @@ public:
 				moveLeftRight,
 				camYaw,
 				camPitch,
-				10.0f,
-				1.5f
+				DistanciaTercera,
+				AlturaTercera
 			);
 		}
 		else

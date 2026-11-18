@@ -117,6 +117,7 @@ void ProcessInput(HWND hWnd, float deltaTime)
     dxrr->moveLeftRight = 0.0f;
     dxrr->camYaw = 0.0f;
     dxrr->camPitch = 0.0f;
+    dxrr->moveUpDown = 0.0f;
 
     float movementSpeed = 30.0f;      // units per second
     const float keyboardLookSpeed = 1.5f;   // radians per second
@@ -134,6 +135,15 @@ void ProcessInput(HWND hWnd, float deltaTime)
 
     if (keyboardData[DIK_D] & 0x80)
         dxrr->moveLeftRight += movementSpeed * deltaTime;
+
+    // Nave: ESPACIO sube, SHIFT baja (solo se usa al volar)
+    const float velocidadSubida = 18.0f;
+
+    if (keyboardData[DIK_SPACE] & 0x80)
+        dxrr->moveUpDown += velocidadSubida * deltaTime;
+
+    if ((keyboardData[DIK_LSHIFT] & 0x80) || (keyboardData[DIK_RSHIFT] & 0x80))
+        dxrr->moveUpDown -= velocidadSubida * deltaTime;
 
     // Rotacion de la camara
 

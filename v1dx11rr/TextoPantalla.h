@@ -345,6 +345,88 @@ float4 PSMain(PSInput entrada) : SV_Target
 		EnviarVertices(vertices);
 	}
 
+	// Cuadrilatero de pantalla (pixeles) donde se "pega" un lienzo de
+	// ancho x alto. Esquinas: 0 = arriba izq, 1 = arriba der,
+	// 2 = abajo der, 3 = abajo izq. Sirve para escribir sobre una imagen
+	// en perspectiva (la pantalla del ticket).
+	struct Cuadro
+	{
+		float x[4];
+		float y[4];
+		float ancho;
+		float alto;
+	};
+
+	// Igual que Dibujar, pero x/y/escala estan en el lienzo del cuadro y
+	// el resultado se deforma (bilineal) para seguir sus esquinas.
+	void DibujarEnCuadro(
+		const char* texto,
+		const Cuadro& cuadro,
+		float x,
+		float y,
+		float escala,
+		float rojo = 1.0f,
+		float verde = 1.0f,
+		float azul = 1.0f)
+	{
+		if (!m_listo || m_context == nullptr || texto == nullptr)
+			return;
+
+		if (cuadro.ancho <= 0.0f || cuadro.alto <= 0.0f)
+			return;
+
+		UINT totalViewports = 1;
+		D3D11_VIEWPORT viewport;
+		m_context->RSGetViewports(&totalViewports, &viewport);
+
+		if (totalViewports == 0 || viewport.Width <= 0.0f || viewport.Height <= 0.0f)
+			return;
+
+		const float color[4] = { rojo, verde, azul, 1.0f };
+		std::vector<VerticeTexto> vertices;
+		vertices.reserve(strlen(texto) * 210);
+
+		// Primero en el lienzo (como si fuera una pantalla de ancho x alto).
+		float cursorX = x;
+		float cursorY = y;
+
+		for (const char* p = texto; *p != '\0';)
+		{
+			if (*p == '\n')
+			{
+				cursorX = x;
+				cursorY += AltoLinea(escala);
+				++p;
+				continue;
+			}
+
+			const int codigo = SiguienteCodigo(p);
+			DibujarGlifo(vertices, codigo, cursorX, cursorY + 2.0f * escala, escala,
+				cuadro.ancho, cuadro.alto, color);
+			cursorX += AnchoLetra(escala);
+		}
+
+		// Luego cada vertice pasa del lienzo al cuadrilatero real.
+		for (size_t i = 0; i < vertices.size(); ++i)
+		{
+			const float s = (vertices[i].x + 1.0f) * 0.5f;
+			const float t = (1.0f - vertices[i].y) * 0.5f;
+
+			const float arribaX = cuadro.x[0] + (cuadro.x[1] - cuadro.x[0]) * s;
+			const float arribaY = cuadro.y[0] + (cuadro.y[1] - cuadro.y[0]) * s;
+			const float abajoX = cuadro.x[3] + (cuadro.x[2] - cuadro.x[3]) * s;
+			const float abajoY = cuadro.y[3] + (cuadro.y[2] - cuadro.y[3]) * s;
+
+			const float px = arribaX + (abajoX - arribaX) * t;
+			const float py = arribaY + (abajoY - arribaY) * t;
+
+			vertices[i].x = (px / viewport.Width) * 2.0f - 1.0f;
+			vertices[i].y = 1.0f - (py / viewport.Height) * 2.0f;
+		}
+
+		EnviarVertices(vertices);
+	}
+
 	static float AnchoLetra(float escala) { return 6.0f * escala; }
 	static float AltoLinea(float escala) { return 11.0f * escala; }
 
